@@ -84,6 +84,8 @@ class MainViewModel(
     private val selectedDetails = MutableStateFlow<MetaDetails?>(null)
     private val continueWatching = MutableStateFlow(CatalogShelf(title = "Continue Watching"))
     private val boardShelves = MutableStateFlow<List<CatalogShelf>>(emptyList())
+    private val isBoardLoading = MutableStateFlow(true)
+    val tvBoardLoading: StateFlow<Boolean> = isBoardLoading
     private val requestedRequests = mutableSetOf<String>()
 
     @Volatile
@@ -889,6 +891,7 @@ class MainViewModel(
                 .collect { (board, shelves) ->
                     cachedBoard = board
                     boardShelves.value = shelves
+                    isBoardLoading.value = false
                     if (board.catalogs.isNotEmpty()) {
                         val toPreload = board.catalogs.take(5)
                             .flatMap { catalog -> catalog.pages.filter { it.content == null } }
@@ -1681,6 +1684,7 @@ class MainViewModel(
 
     fun refreshCatalogs() {
         requestedRequests.clear()
+        isBoardLoading.value = true
         boardRepository.loadBoard()
     }
 

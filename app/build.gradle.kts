@@ -148,6 +148,7 @@ dependencies {
     implementation("pro.streem.pbandk:pbandk-runtime:0.16.0")
     implementation("com.github.Stremio:stremio-core-kotlin:1.15.0")
     implementation("com.jakewharton.timber:timber:5.0.1")
+    implementation("com.google.zxing:core:3.5.4")
     debugImplementation("com.squareup.leakcanary:leakcanary-android:2.14")
     implementation(platform("com.google.firebase:firebase-bom:34.15.0"))
     implementation("com.google.firebase:firebase-analytics")

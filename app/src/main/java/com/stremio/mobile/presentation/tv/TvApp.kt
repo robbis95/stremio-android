@@ -11,7 +11,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +25,7 @@ private enum class TvRoute { Login, Home, Details }
 @Composable
 internal fun TvApp(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
     var routeName by rememberSaveable { mutableStateOf(TvRoute.Login.name) }
@@ -32,6 +33,17 @@ internal fun TvApp(viewModel: MainViewModel) {
     val focusMemory = rememberTvFocusMemory()
     val route = runCatching { TvRoute.valueOf(routeName) }.getOrDefault(TvRoute.Login)
     val authenticated = uiState.account.isAuthenticated
+
+    LaunchedEffect(routeName) {
+        if (routeName == TvRoute.Login.name) {
+            viewModel.startTvAccountLink()
+            try {
+                kotlinx.coroutines.awaitCancellation()
+            } finally {
+                viewModel.stopTvAccountLink()
+            }
+        }
+    }
 
     LaunchedEffect(authenticated, isRestoring) {
         if (authenticated) {
@@ -61,7 +73,9 @@ internal fun TvApp(viewModel: MainViewModel) {
                 authenticated && route == TvRoute.Login -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 route == TvRoute.Login || !authenticated -> TvLoginScreen(
                     account = uiState.account,
+                    linkState = tvLinkState,
                     onLogin = viewModel::login,
+                    onRequestNewLink = viewModel::requestNewTvAccountLink,
                 )
                 else -> {
                     TvHomeScreen(

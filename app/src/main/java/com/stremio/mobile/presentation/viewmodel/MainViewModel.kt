@@ -53,6 +53,14 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 
+data class TvAccountLinkUiState(
+    val link: StremioAccountLink? = null,
+    val isLoading: Boolean = false,
+    val isChecking: Boolean = false,
+    val isConnecting: Boolean = false,
+    val error: String? = null,
+)
+
 class MainViewModel(
     private val authRepository: AuthRepository,
     private val boardRepository: BoardRepository,
@@ -68,6 +76,10 @@ class MainViewModel(
     private val appContext = appContext.applicationContext
     private val latestIntentUri = MutableStateFlow<String?>(null)
     private val account = MutableStateFlow(authRepository.accountFromCore())
+    private val stremioLinkRepository = StremioLinkRepository()
+    private val _tvAccountLink = MutableStateFlow(TvAccountLinkUiState())
+    val tvAccountLink: StateFlow<TvAccountLinkUiState> = _tvAccountLink
+    private var tvLinkJob: Job? = null
     private var authInFlight = false
     private val selectedSection = MutableStateFlow(MainSection.Home)
     private val searchQuery = MutableStateFlow("")
@@ -344,6 +356,12 @@ class MainViewModel(
                     authInFlight = false
                     val message = (inner.value.type as Event.Type.Error).value.error
                     account.value = account.value.copy(isLoading = false, error = message)
+                    if (_tvAccountLink.value.isConnecting) {
+                        _tvAccountLink.value = _tvAccountLink.value.copy(
+                            isConnecting = false,
+                            error = "Could not sign in with that link. Request a new link and try again.",
+                        )
+                    }
                 }
             }
         }
@@ -1974,6 +1992,70 @@ class MainViewModel(
                 authInFlight = false
                 account.value = account.value.copy(isLoading = false, error = it.message ?: "Login failed")
             }
+        }
+    }
+
+    fun loginWithToken(authKey: String) {
+        if (authKey.isBlank()) return
+        authInFlight = true
+        account.value = account.value.copy(isLoading = true, error = null)
+        viewModelScope.launch {
+            runCatching { authRepository.loginWithToken(authKey) }.onFailure {
+                authInFlight = false
+                account.value = account.value.copy(isLoading = false, error = it.message ?: "Login failed")
+                _tvAccountLink.value = _tvAccountLink.value.copy(isConnecting = false, error = "Could not sign in. Request a new link and try again.")
+            }
+        }
+    }
+
+    fun startTvAccountLink() {
+        if (tvLinkJob?.isActive == true || account.value.isAuthenticated) return
+        tvLinkJob = viewModelScope.launch {
+            requestTvAccountLink()
+        }
+    }
+
+    fun requestNewTvAccountLink() {
+        tvLinkJob?.cancel()
+        tvLinkJob = viewModelScope.launch {
+            requestTvAccountLink()
+        }
+    }
+
+    fun stopTvAccountLink() {
+        tvLinkJob?.cancel()
+        tvLinkJob = null
+        _tvAccountLink.value = _tvAccountLink.value.copy(isChecking = false, isLoading = false)
+    }
+
+    private suspend fun requestTvAccountLink() {
+        _tvAccountLink.value = TvAccountLinkUiState(isLoading = true)
+        try {
+            val link = stremioLinkRepository.createLink()
+            _tvAccountLink.value = TvAccountLinkUiState(link = link, isChecking = true)
+            while (true) {
+                delay(2_000L)
+                when (val result = stremioLinkRepository.readLink(link.code)) {
+                    StremioLinkReadResult.Pending -> Unit
+                    is StremioLinkReadResult.Authorized -> {
+                        _tvAccountLink.value = _tvAccountLink.value.copy(isChecking = false, isConnecting = true, error = null)
+                        loginWithToken(result.authKey)
+                        return
+                    }
+                    is StremioLinkReadResult.ExpiredOrError -> {
+                        _tvAccountLink.value = _tvAccountLink.value.copy(isChecking = false, error = result.message)
+                        return
+                    }
+                }
+            }
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            _tvAccountLink.value = _tvAccountLink.value.copy(
+                isLoading = false,
+                isChecking = false,
+                error = error.message ?: "Unable to create a Stremio link",
+            )
         }
     }
 

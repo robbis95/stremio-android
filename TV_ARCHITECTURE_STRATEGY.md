@@ -332,7 +332,122 @@ Add the bridge support in a dedicated infrastructure task.
 
 ---
 
-## 9. Dynamic information architecture
+## 9. Addon-first architecture
+
+Stremio addons are a runtime capability system, not merely a settings screen.
+
+The TV client should therefore be built so installed addons can change:
+
+- which catalogs exist
+- catalog titles and ordering
+- content types
+- which catalogs support search
+- which filters/extras are available
+- metadata sources
+- stream sources
+- subtitles
+- loading/error characteristics
+
+The TV client does **not** need to provide full addon installation/configuration workflows as part of the primary TV experience. Users may manage/configure addons on another Stremio client.
+
+The important requirement is that ordinary TV browsing and playback remain addon-neutral.
+
+### Capability-driven UI
+
+Do not hard-code assumptions such as:
+
+- every catalog is Cinemeta
+- only movie/series types exist
+- every catalog supports search
+- every catalog supports genre
+- every item ID starts with `tt`
+- metadata and streams come from the same addon
+- every stream is a simple HTTP URL or torrent
+
+Use Core-generated requests/selectable state and addon descriptors rather than reconstructing addon routing in TV code.
+
+### Catalog extras
+
+Addon catalogs may declare extras such as:
+
+- `search`
+- `genre`
+- `skip`
+- `date`
+
+Extras may be required or optional and may carry explicit option lists.
+
+Future Discover/Search UI should derive controls from real Core/addon capabilities where they are exposed.
+
+Do not invent filters that the selected catalog cannot satisfy.
+
+### Progressive failure isolation
+
+Addon requests can complete independently and at different speeds.
+
+A slow or failed addon/catalog must not turn the whole Home/Search/Discover surface into one blocking spinner.
+
+Prefer:
+
+- render ready shelves immediately
+- show loading/error state at the smallest meaningful scope
+- allow navigation among ready content
+- let later addon emissions populate their own surfaces without stealing focus
+
+### Metadata and streams
+
+Do not bind a title to one assumed provider.
+
+Core should remain responsible for aggregating compatible metadata and stream addon responses according to Stremio rules.
+
+TV presentation should consume the resulting Core models and preserve source/addon identity only where it helps the user understand or choose between streams.
+
+### Subtitles
+
+Subtitle availability is addon-driven.
+
+Preserve stream metadata such as filename/video hash/video size because Stremio can use these to identify subtitle matches.
+
+Do not build a separate TV subtitle-discovery backend.
+
+### Stream behavior hints
+
+Respect real stream semantics, including:
+
+- `bingeGroup`
+- `notWebReady`
+- source type
+- filename
+- video size/hash
+- external/Android-TV-specific targets where Core exposes them
+
+Do not flatten every stream into an assumed direct playable URL before Core/player resolution.
+
+### Addon management scope
+
+For the current product plan:
+
+- TV browsing/playback must support already-installed/configured addons
+- full addon configuration on TV is not required
+- do not block core TV milestones on building addon management/configuration UI
+- if a future TV surface encounters an addon that requires external configuration, a lightweight explanatory state is sufficient unless product scope explicitly changes
+
+### Testing implication
+
+Later integration tests should include more than the default addon set.
+
+At minimum validate:
+
+- multiple catalogs with duplicate/similar names
+- non-Cinemeta metadata
+- more than one stream addon responding
+- one slow/failing addon alongside healthy addons
+- a catalog supporting search
+- a catalog that does not support search
+- non-standard content types where supported by Core
+- subtitle-capable streams
+
+## 10. Dynamic information architecture
 
 Do not hard-code the concept artwork's fictional navigation taxonomy.
 
@@ -352,7 +467,7 @@ This makes the UI adapt to the user's Stremio configuration instead of pretendin
 
 ---
 
-## 10. TV state architecture
+## 11. TV state architecture
 
 The current `TvApp` collects the entire `MainUiState`.
 
@@ -386,7 +501,7 @@ Use stable immutable state and selective collection.
 
 ---
 
-## 11. Compose for TV strategy
+## 12. Compose for TV strategy
 
 Current TV presentation uses regular `androidx.compose.material3`.
 
@@ -419,7 +534,7 @@ Do not rewrite already-correct custom lazy focus restoration just because TV Mat
 
 ---
 
-## 12. Lazy layout performance rules
+## 13. Lazy layout performance rules
 
 For TV shelves/grids:
 
@@ -438,7 +553,7 @@ Release + R8 is the relevant performance baseline.
 
 ---
 
-## 13. Catalog loading strategy
+## 14. Catalog loading strategy
 
 The current client already supports loading ranges as shelves become visible.
 
@@ -464,7 +579,7 @@ Do not increase parallel network work simply because more data can be requested.
 
 ---
 
-## 14. Image pipeline strategy
+## 15. Image pipeline strategy
 
 The app currently uses a singleton Coil 3 loader with:
 
@@ -490,7 +605,7 @@ The goal is low decode/GPU pressure, not maximal caching.
 
 ---
 
-## 15. Streaming-server startup strategy
+## 16. Streaming-server startup strategy
 
 Today `MainViewModel.init` starts the native streaming server immediately.
 
@@ -518,7 +633,7 @@ Choose based on measured user-visible tradeoff.
 
 ---
 
-## 16. Performance measurement plan
+## 17. Performance measurement plan
 
 Performance work must be evidence-driven.
 
@@ -578,7 +693,7 @@ Emulator results are useful for correctness and relative comparison, but perform
 
 ---
 
-## 17. Core bridge modernization track
+## 18. Core bridge modernization track
 
 Create a dedicated future infrastructure task rather than bundling this into screen work.
 
@@ -626,7 +741,7 @@ No screen redesign should be mixed into that upgrade commit.
 
 ---
 
-## 18. Smart behavior principles
+## 19. Smart behavior principles
 
 "Smart" should mean fewer unnecessary actions, not opaque automation.
 
@@ -652,7 +767,7 @@ Avoid:
 
 ---
 
-## 19. Near-term implementation sequence
+## 20. Near-term implementation sequence
 
 This is the preferred sequence from the current Phase 3A baseline.
 
@@ -724,7 +839,7 @@ As soon as core user journeys are stable:
 
 ---
 
-## 20. Do-not-do list
+## 21. Do-not-do list
 
 Do not:
 
@@ -742,7 +857,7 @@ Do not:
 
 ---
 
-## 21. Research references
+## 22. Research references
 
 Technical decisions in this document were grounded in:
 

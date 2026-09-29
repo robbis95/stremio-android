@@ -34,6 +34,8 @@ class MpvStreamPlayer(
     private var surfaceReady = false
     private var released = false
     private var fileLoaded = false
+    private val firstVisualSignal = FirstVisualSignalGate()
+    private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
     private var eofReached = false
     private val addedSubtitleIds = mutableSetOf<String>()
     private var resizeMode = PlayerResizeMode.FIT
@@ -89,9 +91,15 @@ class MpvStreamPlayer(
                         publishState(error = null, ended = true)
                     } else {
                         publishState(error = "Playback failed", ended = false)
+                        playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError("Playback failed"))
                     }
                 }
-                MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> publishState(error = null, ended = false)
+                MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {
+                    if (fileLoaded && firstVisualSignal.tryEmit()) {
+                        playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("MpvPlaybackRestartProxy"))
+                    }
+                    publishState(error = null, ended = false)
+                }
             }
         }
     }
@@ -133,6 +141,10 @@ class MpvStreamPlayer(
         }
     }
 
+    override fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) {
+        playbackEventListener = listener
+    }
+
     override fun load(
         uri: Uri,
         startPositionMs: Long,
@@ -145,6 +157,7 @@ class MpvStreamPlayer(
         currentSubtitles = subtitles
         currentPreferredSubtitleLang = preferredSubtitleLang
         fileLoaded = false
+        firstVisualSignal.reset()
         eofReached = false
         addedSubtitleIds.clear()
         mutableRuntimeState.value = PlayerRuntimeState(isBuffering = true)
@@ -154,6 +167,7 @@ class MpvStreamPlayer(
     override fun retry() {
         currentStartPositionMs = mutableRuntimeState.value.positionMs
         fileLoaded = false
+        firstVisualSignal.reset()
         eofReached = false
         addedSubtitleIds.clear()
         mutableRuntimeState.value = mutableRuntimeState.value.copy(error = null, ended = false, isBuffering = true)

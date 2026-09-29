@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.os.SystemClock
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.stremio.mobile.BuildConfig
@@ -19,6 +21,7 @@ import com.stremio.mobile.player.LanguageCatalog
 import com.stremio.mobile.player.PlayerEngine
 import com.stremio.mobile.player.PlayerSubtitleStyle
 import com.stremio.mobile.player.PlayerTrackOption
+import com.stremio.mobile.player.PlayerPlaybackEvent
 import com.stremio.mobile.core.theme.AppFont
 import timber.log.Timber
 import com.stremio.mobile.presentation.state.*
@@ -38,6 +41,15 @@ import com.stremio.mobile.presentation.tv.TvDetailsUiState
 import com.stremio.mobile.presentation.tv.TvEpisodeBrowserUiState
 import com.stremio.mobile.presentation.tv.TvStreamTarget
 import com.stremio.mobile.presentation.tv.TvStreamSelectionUiState
+import com.stremio.mobile.presentation.tv.TvPlaybackUiState
+import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
+import com.stremio.mobile.presentation.tv.TvPlaybackStage
+import com.stremio.mobile.presentation.tv.TvPlaybackTiming
+import com.stremio.mobile.presentation.tv.isCurrentTvAttempt
+import com.stremio.mobile.presentation.tv.tvProgressReportingAllowed
+import com.stremio.mobile.presentation.tv.clampTvSeekTarget
+import com.stremio.mobile.presentation.tv.safeTvPlaybackTrace
+import com.stremio.mobile.presentation.tv.tvPlaybackCompletionPolicy
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
 import com.stremio.mobile.presentation.tv.tvStreamTargetMatches
 import com.stremio.mobile.presentation.tv.mapTvStreamEmission
@@ -130,6 +142,10 @@ class MainViewModel(
     internal val tvDetailsUiState: StateFlow<TvDetailsUiState> = _tvDetailsUiState.asStateFlow()
     private val _tvStreamSelection = MutableStateFlow(TvStreamSelectionUiState())
     internal val tvStreamSelection: StateFlow<TvStreamSelectionUiState> = _tvStreamSelection.asStateFlow()
+    private val _tvPlayback = MutableStateFlow(TvPlaybackUiState())
+    internal val tvPlayback: StateFlow<TvPlaybackUiState> = _tvPlayback.asStateFlow()
+    private var tvPlaybackJob: Job? = null
+    private var tvPlaybackMonitorJob: Job? = null
     private var tvStreamsJob: Job? = null
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
     private val auditedTvStreamTargets = mutableSetOf<String>()
@@ -2038,6 +2054,220 @@ class MainViewModel(
         if (state.options.any { it.semanticKey == semanticKey }) {
             _tvStreamSelection.value = state.copy(selectedStreamKey = semanticKey)
         }
+    }
+
+    /** Starts the explicitly activated TV source without entering the mobile autoplay/health path. */
+    internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption) {
+        tvPlaybackJob?.cancel()
+        tvPlaybackMonitorJob?.cancel()
+        playbackRepository.setPlaybackEventListener(null)
+        playbackRepository.release()
+
+        val requestedEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
+        val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
+        val selectedState = _tvStreamSelection.value
+        if (selectedState.target?.semanticTargetKey == target.semanticTargetKey) {
+            _tvStreamSelection.value = selectedState.copy(selectedStreamKey = option.semanticKey)
+        }
+        _tvPlayback.value = TvPlaybackUiState(
+            attempt = attempt,
+            option = option,
+            stage = TvPlaybackStage.Resolving,
+            requestedEngine = requestedEngine,
+            timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
+        )
+        lastTvTimeReportNanos = 0L
+        Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated"))
+
+        tvPlaybackJob = viewModelScope.launch {
+            try {
+                if (tvStreamRequiresLocalServer(option)) startServerInternal()
+                playbackRepository.setPlaybackEventListener { event -> onTvPlaybackEvent(attempt, event) }
+                val loaded = playbackRepository.resolveAndLoadStream(
+                    option = option,
+                    engine = requestedEngine,
+                    displayTitle = listOfNotNull(target.contentName, target.episodeLabel).joinToString(" · "),
+                    onEvent = { event ->
+                        if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@resolveAndLoadStream
+                        _tvPlayback.value = _tvPlayback.value.copy(
+                            stage = when (event.stage) {
+                                PlaybackRepository.PlaybackLoadStage.ResolutionStarted -> TvPlaybackStage.Resolving
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadStarted,
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadReturned -> TvPlaybackStage.Preparing
+                                PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved -> TvPlaybackStage.Resolving
+                            },
+                            timing = when (event.stage) {
+                                PlaybackRepository.PlaybackLoadStage.ResolutionStarted -> _tvPlayback.value.timing.copy(resolutionStartedNanos = event.monotonicNanos)
+                                PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved -> _tvPlayback.value.timing.copy(playableSourceResolvedNanos = event.monotonicNanos)
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadStarted -> _tvPlayback.value.timing.copy(playerLoadStartedNanos = event.monotonicNanos)
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadReturned -> _tvPlayback.value.timing.copy(playerLoadReturnedNanos = event.monotonicNanos)
+                            },
+                        )
+                    },
+                )
+                if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@launch
+                if (!loaded) {
+                    failTvPlayback(attempt, "Couldn’t start this source", "resolve")
+                    return@launch
+                }
+                val actualEngine = playbackRepository.actualEngine()
+                _tvPlayback.value = _tvPlayback.value.copy(
+                    stage = TvPlaybackStage.Preparing,
+                    actualEngine = actualEngine,
+                    runtime = playbackRepository.getPlayer()?.runtimeState?.value ?: _tvPlayback.value.runtime,
+                )
+                Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "load-returned", actualEngine, _tvPlayback.value.timing))
+                startTvPlaybackMonitor(attempt)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) {
+                    failTvPlayback(attempt, "Couldn’t start this source", _tvPlayback.value.stage.name.lowercase())
+                }
+            }
+        }
+    }
+
+    internal fun activateTvStream(semanticKey: String) {
+        val state = _tvStreamSelection.value
+        val target = state.target ?: return
+        val option = state.options.firstOrNull { it.semanticKey == semanticKey } ?: return
+        _tvStreamSelection.value = state.copy(selectedStreamKey = option.semanticKey)
+        startTvPlayback(target, option)
+    }
+
+    internal fun retryTvPlayback() {
+        val current = _tvPlayback.value
+        val target = current.attempt?.target ?: return
+        val option = current.option ?: return
+        startTvPlayback(target, option)
+    }
+
+    internal fun tvPlaybackPlayer() = playbackRepository.getPlayer()
+
+    internal fun tvSeekDurationMs(): Long = profileSettings.value?.seekTimeDuration ?: 10_000L
+
+    private fun tvStreamRequiresLocalServer(option: StreamOption): Boolean {
+        if (option.core.stream.source is com.stremio.core.types.resource.Stream.Source.Tramvai) return true
+        val directUrl = runCatching { core.directUrl(option.core.stream) }.getOrNull()
+        return directUrl?.startsWith(StremioCore.STREAMING_SERVER_BASE) == true
+    }
+
+    private fun onTvPlaybackEvent(attempt: TvPlaybackAttempt, event: PlayerPlaybackEvent) {
+        if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        when (event) {
+            is PlayerPlaybackEvent.FirstVisualFrame -> {
+                val current = _tvPlayback.value
+                if (current.firstVisualObserved) return
+                val timing = current.timing.copy(firstVisualSignalNanos = SystemClock.elapsedRealtimeNanos())
+                _tvPlayback.value = current.copy(
+                    stage = TvPlaybackStage.Playing,
+                    firstVisualObserved = true,
+                    timing = timing,
+                )
+                val actualEngine = current.actualEngine ?: playbackRepository.actualEngine()
+                authRepository.rememberLocalStreamSelection(
+                    attempt.target.contentType,
+                    attempt.target.contentId,
+                    attempt.target.videoId ?: attempt.target.contentId,
+                    current.option ?: return,
+                )
+                Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "first-visual", actualEngine, timing, event.signalKind))
+            }
+            is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", _tvPlayback.value.stage.name.lowercase())
+        }
+    }
+
+    private fun startTvPlaybackMonitor(attempt: TvPlaybackAttempt) {
+        tvPlaybackMonitorJob?.cancel()
+        val player = playbackRepository.getPlayer() ?: return
+        tvPlaybackMonitorJob = viewModelScope.launch {
+            player.runtimeState.collect { runtime ->
+                if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
+                val current = _tvPlayback.value
+                _tvPlayback.value = current.copy(
+                    runtime = runtime,
+                    isBuffering = runtime.isBuffering,
+                    error = if (runtime.error != null && !current.firstVisualObserved) "Couldn’t start this source" else current.error,
+                    stage = when {
+                        current.stage == TvPlaybackStage.Ended -> TvPlaybackStage.Ended
+                        current.stage == TvPlaybackStage.Error -> TvPlaybackStage.Error
+                        runtime.ended -> TvPlaybackStage.Ended
+                        else -> current.stage
+                    },
+                )
+                val fallbackNotice = current.requestedEngine != current.actualEngine &&
+                    runtime.error == "MPV unavailable; using ExoPlayer."
+                if (runtime.error != null && !fallbackNotice && current.stage != TvPlaybackStage.Error) {
+                    failTvPlayback(attempt, "Couldn’t start this source", current.stage.name.lowercase())
+                } else if (runtime.ended && current.stage != TvPlaybackStage.Ended) {
+                    if (tvProgressReportingAllowed(current) && runtime.durationMs > 0 && tvPlaybackCompletionPolicy.reportEnded) {
+                        playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
+                        playbackRepository.reportEnded()
+                    }
+                    _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Ended)
+                    Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "ended", current.actualEngine, current.timing))
+                } else if (tvProgressReportingAllowed(current) && runtime.durationMs > 0 &&
+                    (lastTvTimeReportNanos == 0L || SystemClock.elapsedRealtimeNanos() - lastTvTimeReportNanos >= 5_000_000_000L)
+                ) {
+                    lastTvTimeReportNanos = SystemClock.elapsedRealtimeNanos()
+                    playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
+                }
+            }
+        }
+    }
+
+    private var lastTvTimeReportNanos = 0L
+
+    private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
+        if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
+        Log.w("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
+    }
+
+    internal fun toggleTvPlayback() {
+        val state = _tvPlayback.value
+        if (state.stage == TvPlaybackStage.Ended || state.stage == TvPlaybackStage.Error) return
+        val player = playbackRepository.getPlayer() ?: return
+        if (state.runtime.isPlaying) {
+            player.pause()
+            playbackRepository.reportPausedChanged(true)
+            reportTvFinalProgress(state)
+        } else {
+            player.play()
+            playbackRepository.reportPausedChanged(false)
+        }
+    }
+
+    internal fun seekTvPlaybackBy(deltaMs: Long) {
+        val state = _tvPlayback.value
+        if (!state.firstVisualObserved) return
+        val player = playbackRepository.getPlayer() ?: return
+        val target = clampTvSeekTarget(state.runtime.positionMs + deltaMs, state.runtime.durationMs) ?: return
+        player.seekTo(target)
+        playbackRepository.reportSeek(target, state.runtime.durationMs)
+        reportTvFinalProgress(state.copy(runtime = state.runtime.copy(positionMs = target)))
+    }
+
+    private fun reportTvFinalProgress(state: TvPlaybackUiState) {
+        if (!tvProgressReportingAllowed(state) || state.runtime.durationMs <= 0) return
+        playbackRepository.reportTimeChanged(state.runtime.positionMs, state.runtime.durationMs)
+    }
+
+    internal fun closeTvPlayback() {
+        val state = _tvPlayback.value
+        state.attempt?.let { attempt ->
+            reportTvFinalProgress(state)
+            Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "closed", state.actualEngine, state.timing))
+        }
+        tvPlaybackJob?.cancel()
+        tvPlaybackJob = null
+        tvPlaybackMonitorJob?.cancel()
+        tvPlaybackMonitorJob = null
+        playbackRepository.setPlaybackEventListener(null)
+        playbackRepository.release()
+        lastTvTimeReportNanos = 0L
+        _tvPlayback.value = TvPlaybackUiState()
     }
 
     internal fun closeTvStreams() {

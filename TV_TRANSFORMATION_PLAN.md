@@ -354,15 +354,8 @@ Do not invent recommendation sources.
 - Phase 5C stream discovery and stable provider/stream focus
 
 ### Phase 6 — Playback
-- TV player overlay
-- play/pause
-- D-pad seek
-- media keys
-- Back contract
-- audio/subtitle tracks
-- subtitle settings
-- next episode
-- ExoPlayer/MPV validation
+- Phase 6A ordinary manually selected playback is recorded below
+- follow-up playback controls, tracks, and transitions remain separate milestones
 
 After the ordinary TV playback path is working and instrumented, continue through the staged Playback Experience roadmap in `TV_PLAYBACK_EXPERIENCE_ROADMAP.md`: conservative Core-backed Skip Segments, provider-neutral segment resolution, Smart Play/Fallback, Episode Continuity, Next Episode transaction, and bounded seamless preloading. Do not implement these as unrelated hacks.
 
@@ -593,7 +586,13 @@ Sixteen new pure tests cover target semantics, stale target matching, provider i
 
 ## Current next gate
 
-Phase 5C source discovery/selection is complete. The next exact milestone is Phase 6A: add the ordinary TV playback handoff from the selected `StreamOption`, then integrate the existing Core resolve-and-load flow with the existing Player surface. Keep this first playback path explicit and manually selected; do not add Smart Play/ranking, fallback, Skip Segments, next-episode preparation, or preload. Instrument source selection → resolution → player prepare → first frame and verify supported ExoPlayer/MPV paths on TV before starting the staged Playback Experience roadmap.
+Phase 6A ordinary manual playback is implemented on `feat/android-tv`, starting at `41bbb1a4db205f1854f7879b61d54d4ee71980bb`. Explicit stream activation enters a nested TV Player and uses the existing Core resolve-and-load repository path. Attempt-scoped monotonic timestamps cover resolution start, playable source resolution, player load start/return, and first visual signal. ExoPlayer uses its rendered-first-frame callback; MPV uses the first playback-restart event after file load. Retries receive a new attempt identity, stale events are ignored, and requested versus actual engine is tracked through the existing MPV-to-Exo compatibility fallback.
+
+Playback state stays TV-specific. Starting a TV stream does not enter the broad mobile `playStream` flow; history stream selection is committed only after first visual progress, and progress reporting is gated on that same signal. Back reports final progress if eligible, releases the player, and returns to Streams. The player exposes basic play/pause and bounded D-pad seek controls. Completion is reported without auto-advancing. No Smart Play/ranking, fallback policy, segment skipping, next-episode preparation, or preload was added.
+
+The requested compile, assemble, and unit-test tasks pass (124 tests, 0 failures); `git diff --check` passes. The universal debug APK installed with app data preserved on the ARM64 Google TV API 36 emulator and `TvActivity` was brought to the foreground. The signed-in TV Home screen was visually confirmed. A Silo S2E7 playback attempt and ExoPlayer/MPV first-frame run were not completed, so runtime TTFF measurements remain uncollected and neither engine is claimed runtime-validated by this phase. The phase 6A implementation includes privacy-safe trace formatting tests; logs and documentation do not include stream URLs.
+
+The next exact milestone is the first manual Silo S2E7 source playback runtime audit on TV: capture resolution and first-visual timing, confirm controls/Back/progress behavior, then repeat with the other supported engine if available. Keep the staged Playback Experience roadmap gated on ordinary playback runtime validation; do not begin its later stages as part of that audit.
 
 The Phase 3B late Home catalog emission remains a watch item. This phase did not stage a controlled late Home emission, and the historical focus warning remains a watch item because it has not reproduced. Continue observing normal asynchronous catalog arrivals in future runtime checks.
 

@@ -886,7 +886,13 @@ Source review and runtime logs found no resolve/play/player/history transition f
 
 ### Gate 7D — Phase 6A ordinary TV playback
 
-Next, wire explicit activation of the selected source into the existing Core resolve-and-load path and TV Player surface. Preserve the ordinary manual source choice as the only selection policy. Add playback-boundary instrumentation (selection, resolution, prepare, first frame) and validate existing ExoPlayer and MPV capabilities. Keep ranking/Smart Play, fallback, Skip Segments, continuity, next-episode preparation, and preload out of this first playback milestone.
+Status: implemented on `feat/android-tv`, starting at `41bbb1a4db205f1854f7879b61d54d4ee71980bb`.
+
+Explicit activation of a selected TV `StreamOption` routes into the nested TV Player, preserving the Streams/Details origin. The ViewModel owns a narrow attempt state and calls the existing `PlaybackRepository.resolveAndLoadStream` path directly rather than the mobile `playStream` orchestration. Repository callbacks stamp resolution start, playable source resolved, player load start, and load return with monotonic nanoseconds. Player callbacks stamp ExoPlayer's rendered first frame or MPV's first playback restart following file load. An attempt ID gates asynchronous callbacks; retry creates a fresh ID, while requested and actual engine are tracked across the existing MPV-unavailable-to-ExoPlayer fallback.
+
+History stream selection is persisted only after the first visual signal, and progress events are gated on first visual progress. Back finalizes eligible progress, releases this TV player, and returns to Streams. Basic play/pause and bounded seek controls are available. End is reported without automatic next-episode behavior. No ranking/Smart Play, fallback policy, Skip Segments, continuity, next-episode preparation, or preload was added.
+
+Compile, assemble, and unit tests pass (124 tests, 0 failures); `git diff --check` passes. The universal debug APK installed with data preserved on the ARM64 Google TV API 36 emulator and the TV activity was foregrounded. The signed-in TV Home screen was visually confirmed. Silo S2E7 playback and actual ExoPlayer/MPV first-visual runs were not completed; TTFF values and engine runtime validation remain outstanding. Safe trace formatting is unit-tested to omit URLs. Complete the manual source runtime audit before advancing to Gate 8 performance instrumentation or the staged Playback Experience work.
 
 ### Gate 8 — performance instrumentation
 

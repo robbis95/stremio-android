@@ -19,9 +19,16 @@ class PlaybackRepository(
     private val core: StremioCore,
     private val playbackManager: PlaybackManager
 ) {
+    enum class PlaybackLoadStage { ResolutionStarted, PlayableSourceResolved, PlayerLoadStarted, PlayerLoadReturned }
+    data class PlaybackLoadEvent(val stage: PlaybackLoadStage, val monotonicNanos: Long)
     val state: StateFlow<PlaybackState> get() = playbackManager.state
 
     fun getPlayer(): Player? = playbackManager.getPlayer()
+
+    fun actualEngine(): PlayerEngine? = playbackManager.actualEngine
+
+    fun setPlaybackEventListener(listener: ((com.stremio.mobile.player.PlayerPlaybackEvent) -> Unit)?) =
+        playbackManager.setPlaybackEventListener(listener)
 
     fun attachView(view: android.view.View) = playbackManager.attachView(view)
 
@@ -33,13 +40,22 @@ class PlaybackRepository(
         option: StreamOption,
         engine: PlayerEngine = PlayerEngine.EXO,
         displayTitle: String? = null,
+        onEvent: ((PlaybackLoadEvent) -> Unit)? = null,
     ): Boolean {
-        val url = runCatching { core.resolvePlayableUrl(option.core).first() }.getOrNull()
-            ?: core.directUrl(option.core.stream)
+        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.ResolutionStarted, android.os.SystemClock.elapsedRealtimeNanos()))
+        val resolvedUrl = try {
+            core.resolvePlayableUrl(option.core).first()
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        }
+        val url = resolvedUrl ?: core.directUrl(option.core.stream)
 
         if (url.isNullOrBlank()) {
             return false
         }
+        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayableSourceResolved, android.os.SystemClock.elapsedRealtimeNanos()))
 
         val subtitles = option.core.stream.subtitles.map {
             ExternalSubtitle(
@@ -57,6 +73,7 @@ class PlaybackRepository(
         val startPositionMs = runCatching { core.getResumePositionMs(option.core.streamRequest) }.getOrDefault(0L)
         val settings = runCatching { core.getCtx().profile.settings }.getOrNull()
 
+        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayerLoadStarted, android.os.SystemClock.elapsedRealtimeNanos()))
         playbackManager.load(
             uri = Uri.parse(url),
             title = displayTitle ?: option.name,
@@ -66,6 +83,7 @@ class PlaybackRepository(
             engine = engine,
             settings = settings,
         )
+        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayerLoadReturned, android.os.SystemClock.elapsedRealtimeNanos()))
         return true
     }
 

@@ -451,6 +451,14 @@ Do not implement this roadmap before the normal TV playback path exists.
 - define TTFF, transition and failure timestamps
 - measure current behavior
 
+#### Phase 6A implementation status
+
+The ordinary TV playback instrumentation baseline is implemented in the Android app. Each manual TV playback attempt receives a unique identity and uses monotonic timestamps for resolution start, playable-source resolution, player-load start/return, and first visual progress. TTFF is measured from attempt start to first visual progress when both timestamps exist; incomplete attempts remain without a TTFF value. ExoPlayer reports its rendered-first-frame callback. MPV reports its first playback-restart event after file load as a first-visual proxy. Retry receives a new attempt identity and stale callbacks are rejected.
+
+TV playback calls the existing Core resolve-and-load repository path and maintains a separate TV playback state. It does not enter mobile `playStream` orchestration. Requested and actual engine are represented separately. Stream-history selection and progress reporting are gated on first visual progress, with final progress reported on Back when eligible. Completion is reported without automatic episode advance. `PlaybackManager` continues to release and recreate the player for each load; this remains the baseline for later measurement. Trace formatting is tested to exclude stream URLs.
+
+The compile, assemble, and unit-test tasks passed (124 tests, 0 failures). The debug universal APK was installed with data preserved on the ARM64 Google TV API 36 emulator, and `TvActivity` was foregrounded; the signed-in Home screen was visually confirmed. No Silo S2E7 playback attempt reached the Player in this verification session, so no source-resolution, first-visual, TTFF, buffering, or engine runtime measurements are available yet. ExoPlayer and MPV runtime paths have not been validated by this phase. PE0 measurement remains open until a manual source playback run records those values.
+
 ### PE1 — Core Skip Segments POC
 - expose Core `introOutro` through the existing Android playback state/repository path if not already surfaced
 - normalized segment domain model

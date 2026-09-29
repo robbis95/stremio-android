@@ -89,9 +89,27 @@ data class PlayerRuntimeState(
     val videoFrameRate: Float = 0f,
 )
 
+sealed interface PlayerPlaybackEvent {
+    data class FirstVisualFrame(val signalKind: String) : PlayerPlaybackEvent
+    data class PlaybackError(val message: String) : PlayerPlaybackEvent
+}
+
+/** Small per-player signal gate; reset it whenever a new media load/retry begins. */
+internal class FirstVisualSignalGate {
+    private var emitted = false
+    fun reset() { emitted = false }
+    fun tryEmit(): Boolean {
+        if (emitted) return false
+        emitted = true
+        return true
+    }
+}
+
 interface Player {
     val engine: PlayerEngine
     val runtimeState: StateFlow<PlayerRuntimeState>
+
+    fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?)
 
     fun createView(context: Context): View
     fun load(

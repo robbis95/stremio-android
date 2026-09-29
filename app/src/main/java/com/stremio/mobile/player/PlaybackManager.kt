@@ -16,8 +16,16 @@ class PlaybackManager(
 ) {
     private val mutableState = MutableStateFlow(PlaybackState())
     private var player: Player? = null
+    var actualEngine: PlayerEngine? = null
+        private set
+    private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
 
     val state: StateFlow<PlaybackState> = mutableState
+
+    fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) {
+        playbackEventListener = listener
+        player?.setPlaybackEventListener(listener)
+    }
 
     fun load(
         uri: Uri,
@@ -29,20 +37,25 @@ class PlaybackManager(
         settings: com.stremio.core.types.profile.Profile.Settings? = null,
     ) {
         player?.release()
+        player = null
+        actualEngine = null
         val fallbackMessage = if (engine == PlayerEngine.MPV) "MPV unavailable; using ExoPlayer." else null
         player = runCatching {
             PlayerFactory.create(context, engine, settings).also {
+                it.setPlaybackEventListener(playbackEventListener)
                 it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
                 it.play()
             }
         }.getOrElse { failure ->
             if (engine != PlayerEngine.MPV) throw failure
             ExoStreamPlayer(context, settings).also {
+                it.setPlaybackEventListener(playbackEventListener)
                 it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
                 it.play()
                 it.reportNonFatalError(fallbackMessage)
             }
         }
+        actualEngine = player?.engine
         mutableState.value = PlaybackState(activeUri = uri.toString(), title = title, isPlaying = true)
     }
 
@@ -69,8 +82,10 @@ class PlaybackManager(
     }
 
     fun release() {
+        player?.setPlaybackEventListener(null)
         player?.release()
         player = null
+        actualEngine = null
         mutableState.value = PlaybackState()
     }
 

@@ -34,6 +34,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     val continueWatching by viewModel.tvContinueWatching.collectAsStateWithLifecycle()
     val detailsUiState by viewModel.tvDetailsUiState.collectAsStateWithLifecycle()
     val streamUiState by viewModel.tvStreamSelection.collectAsStateWithLifecycle()
+    val tvPlaybackState by viewModel.tvPlayback.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
@@ -133,7 +134,17 @@ internal fun TvApp(viewModel: MainViewModel) {
     BackHandler(enabled = route == TvRoute.Streams) {
         returnFromStreams()
     }
+    BackHandler(enabled = route == TvRoute.Player) {
+        viewModel.closeTvPlayback()
+        routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name
+    }
     BackHandler(enabled = route == TvRoute.Details) { returnFromDetails() }
+
+    LaunchedEffect(routeName, tvPlaybackState.playbackAttemptId, tvPlaybackState.stage) {
+        if (route == TvRoute.Player && (tvPlaybackState.playbackAttemptId == null || tvPlaybackState.stage == TvPlaybackStage.Idle)) {
+            routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name
+        }
+    }
 
     TvTheme {
         Box(Modifier.fillMaxSize().background(TvColors.background)) {
@@ -155,7 +166,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                                     TvRoute.Discover -> TvTopLevelRoute.Discover
                                     TvRoute.Library -> TvTopLevelRoute.Library
                                     TvRoute.Search -> TvTopLevelRoute.Search
-                                    TvRoute.Login, TvRoute.Details, TvRoute.Streams -> error("Top navigation is hidden for $route")
+                                    TvRoute.Login, TvRoute.Details, TvRoute.Streams, TvRoute.Player -> error("Top navigation is hidden for $route")
                                 },
                                 onSelect = { destination ->
                                     if (destination == TvTopLevelRoute.Discover) discoverFocusRequestId = 0
@@ -270,8 +281,25 @@ internal fun TvApp(viewModel: MainViewModel) {
                             focusMemory = streamFocusMemory,
                             onBack = returnFromStreams,
                             onSelectProvider = viewModel::selectTvProvider,
-                            onSelectStream = viewModel::selectTvStream,
+                            onSelectStream = { semanticKey ->
+                                viewModel.activateTvStream(semanticKey)
+                                routeName = TvRouteState(TvRoute.Streams, detailsOrigin).openPlayer().route.name
+                            },
                             onFocusChanged = { targetKey, memory -> streamFocusMemory[targetKey] = memory },
+                        )
+                    }
+                    if (route == TvRoute.Player) {
+                        TvPlayerScreen(
+                            state = tvPlaybackState,
+                            player = viewModel.tvPlaybackPlayer(),
+                            seekDurationMs = viewModel.tvSeekDurationMs(),
+                            onTogglePlayback = viewModel::toggleTvPlayback,
+                            onSeek = viewModel::seekTvPlaybackBy,
+                            onRetry = viewModel::retryTvPlayback,
+                            onBack = {
+                                viewModel.closeTvPlayback()
+                                routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name
+                            },
                         )
                     }
                 }

@@ -107,6 +107,8 @@ class ExoStreamPlayer(
     private var currentSubtitles: List<ExternalSubtitle> = emptyList()
     private var currentPreferredSubtitleLang: String? = null
     private var currentSubtitleStyle = PlayerSubtitleStyle()
+    private val firstVisualSignal = FirstVisualSignalGate()
+    private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
 
     private val listener = object : androidx.media3.common.Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -118,7 +120,14 @@ class ExoStreamPlayer(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            publishState(error = error.message ?: "Playback failed")
+            val message = error.message ?: "Playback failed"
+            publishState(error = message)
+            playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(message))
+        }
+
+        override fun onRenderedFirstFrame() {
+            if (!firstVisualSignal.tryEmit()) return
+            playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
         }
 
         override fun onTracksChanged(tracks: Tracks) {
@@ -152,6 +161,10 @@ class ExoStreamPlayer(
         }
     }
 
+    override fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) {
+        playbackEventListener = listener
+    }
+
     override fun load(
         uri: Uri,
         startPositionMs: Long,
@@ -159,6 +172,7 @@ class ExoStreamPlayer(
         preferredSubtitleLang: String?,
         settings: com.stremio.core.types.profile.Profile.Settings?,
     ) {
+        firstVisualSignal.reset()
         currentUri = uri
         currentStartPositionMs = startPositionMs
         currentSubtitles = subtitles
@@ -171,6 +185,7 @@ class ExoStreamPlayer(
     }
 
     override fun retry() {
+        firstVisualSignal.reset()
         mutableRuntimeState.value = mutableRuntimeState.value.copy(error = null, ended = false)
         currentUri?.let { uri ->
             val resumePosition = exoPlayer.currentPosition.coerceAtLeast(currentStartPositionMs)

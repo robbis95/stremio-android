@@ -25,8 +25,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -45,12 +46,14 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.data.model.CatalogShelf
+import kotlinx.coroutines.flow.first
 
 @Composable
 internal fun TvHomeScreen(
     shelves: List<CatalogShelf>,
     isBoardLoading: Boolean,
     isActive: Boolean,
+    restoreFocusRequestId: Int,
     focusMemory: TvFocusMemory,
     onOpenDetails: (CatalogItem) -> Unit,
 ) {
@@ -60,18 +63,32 @@ internal fun TvHomeScreen(
         ?: shelves.firstOrNull()
     val items = shelf?.items.orEmpty()
     val contentKeys = remember(items) { items.map { contentFocusKey(it.type, it.id) } }
-    val requesters = remember(contentKeys) { contentKeys.associateWith { FocusRequester() } }
+    val requesters = remember { mutableMapOf<String, FocusRequester>() }
+    contentKeys.forEach { key -> requesters.getOrPut(key) { FocusRequester() } }
     val listState = rememberLazyListState()
     var focusedKey by remember { mutableStateOf<String?>(null) }
+    val currentContentKeys by rememberUpdatedState(contentKeys)
+    val currentBoardLoading by rememberUpdatedState(isBoardLoading)
+    val currentShelfLoading by rememberUpdatedState(shelf?.isLoading == true)
 
-    LaunchedEffect(isActive, contentKeys) {
-        if (!isActive || contentKeys.isEmpty()) return@LaunchedEffect
-        val oldKey = focusMemory.focusedContentKey
-        val restore = oldKey in contentKeys
-        val targetKey = if (restore) oldKey!! else contentKeys.first()
-        val targetIndex = contentKeys.indexOf(targetKey)
-        if (targetIndex >= 0) listState.scrollToItem(targetIndex)
-        withFrameNanos { }
+    LaunchedEffect(isActive, restoreFocusRequestId) {
+        if (!isActive) return@LaunchedEffect
+
+        val rememberedKey = focusMemory.focusedContentKey
+        val (availableKeys, _, _) = snapshotFlow {
+            Triple(currentContentKeys, currentBoardLoading, currentShelfLoading)
+        }.first { (keys, boardLoading, shelfLoading) ->
+            keys.isNotEmpty() &&
+                ((rememberedKey != null && rememberedKey in keys) || (!boardLoading && !shelfLoading))
+        }
+
+        val targetKey = rememberedKey?.takeIf { it in availableKeys } ?: availableKeys.first()
+        val targetIndex = availableKeys.indexOf(targetKey)
+        listState.scrollToItem(targetIndex)
+        snapshotFlow {
+            listState.layoutInfo.visibleItemsInfo.any { it.key == targetKey }
+        }.first { it }
+
         requesters[targetKey]?.requestFocus()
         focusedKey = targetKey
         focusMemory.focusedContentKey = targetKey
@@ -124,7 +141,10 @@ internal fun TvHomeScreen(
                         rightRequester = next,
                         upRequester = requester,
                         downRequester = requester,
-                        onActivate = { onOpenDetails(item) },
+                        onActivate = {
+                            focusMemory.focusedContentKey = key
+                            onOpenDetails(item)
+                        },
                     )
                 }
             }

@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -29,6 +30,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
     var routeName by rememberSaveable { mutableStateOf(TvRoute.Login.name) }
+    var restoreFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var detailsRequested by remember { mutableStateOf(false) }
     val focusMemory = rememberTvFocusMemory()
     val route = runCatching { TvRoute.valueOf(routeName) }.getOrDefault(TvRoute.Login)
@@ -56,14 +58,20 @@ internal fun TvApp(viewModel: MainViewModel) {
     LaunchedEffect(routeName, uiState.selectedDetails) {
         if (routeName == TvRoute.Details.name && uiState.selectedDetails == null && !detailsRequested) {
             // A recreated activity cannot retain an in-memory detail request; recover to Home.
+            restoreFocusRequestId++
             routeName = TvRoute.Home.name
         }
     }
 
-    BackHandler(enabled = route == TvRoute.Details) {
+    val returnToHome = {
         viewModel.closeDetails()
         detailsRequested = false
+        restoreFocusRequestId++
         routeName = TvRoute.Home.name
+    }
+
+    BackHandler(enabled = route == TvRoute.Details) {
+        returnToHome()
     }
 
     StremioMobileTheme {
@@ -82,6 +90,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                         shelves = uiState.boardShelves,
                         isBoardLoading = isBoardLoading,
                         isActive = route == TvRoute.Home,
+                        restoreFocusRequestId = restoreFocusRequestId,
                         focusMemory = focusMemory,
                         onOpenDetails = { item ->
                             detailsRequested = true
@@ -92,11 +101,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                     if (route == TvRoute.Details) {
                         TvDetailsScreen(
                             details = uiState.selectedDetails,
-                            onBack = {
-                                viewModel.closeDetails()
-                                detailsRequested = false
-                                routeName = TvRoute.Home.name
-                            },
+                            onBack = returnToHome,
                         )
                     }
                 }

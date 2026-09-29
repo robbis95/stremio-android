@@ -383,8 +383,7 @@ Do not implement Smart Play, Smart Fallback, Episode Continuity or Seamless Epis
 
 ### Phase 7 — Discover and Library
 - Discover production route is recorded in Phase 4B below
-- Library remains unimplemented
-- future Library work must use real Core state and actions
+- Library production route is recorded in Phase 4C below
 
 ### Phase 8 — Addons, account, settings
 - addon management
@@ -444,6 +443,23 @@ Runtime results on the final APK: initial Core selection was Movie/Popular with 
 The previous Phase 3B late Home catalog emission remains a watch item: this phase observed Home returning with existing content and focus, but did not stage a controlled late Home emission. Runtime screenshots from this phase are outside Git at `/private/tmp/stremio-android-tv-phase4b-final/`.
 
 Library is not complete. Remaining browse-route work is Library plus later browse refinements such as explicit-request Discover entry/See All if scheduled; do not start Library, Settings, playback, episodes, or Smart Playback as part of Phase 4B.
+
+## Phase 4C — Production TV Library
+
+Status: implemented on `feat/android-tv`, unit-tested, built, installed, and exercised on the existing Google TV ARM64 emulator. Starting remote tip: `a3ff961bfaca6bafb41bba9bfb3984542686e645`.
+
+- Library consumes the existing Core `LibraryWithFilters` and `LibraryItem` through `CatalogRepository` and a narrow immutable `TvLibraryUiState`. Core's selected `LibraryRequest`, selectable type/sort requests, and `nextPage` remain authoritative. The TV route does not collect `MainUiState` or create a second Library backend model.
+- `LibraryItem` mapping now preserves id, type, name, poster and shape, watched, remaining episodes, supported behavior hints, and real progress normalized from `state.timeOffset / state.duration` into 0..1. Missing duration yields unknown progress. Library-only fields are not replaced with fabricated metadata.
+- Type labels map null to All, known values to Movie/Series, and retain humanized custom types. Runtime exposed All, Movie, and Series. The six Core sorts map to Last watched, Name A–Z, Name Z–A, Most watched, Watched first, and Unwatched first.
+- The route uses the Discover-proven five-column, 144 dp poster, 72 dp safe-margin grid and existing TV poster focus contract. Library owns independent semantic focus, type/sort focus, grid scroll, and pagination memory. Selected-filter styling remains visible when focus moves elsewhere.
+- For unchanged type+sort identity, a pure presentation snapshot retains the relative order of surviving items, refreshes each item's data from Core, removes missing items, and appends newly exposed items in Core order. A type or sort change adopts Core order. Page is excluded from the logical identity, so pagination extends the snapshot without a reset.
+- Pagination dispatches Core `ActionLibraryWithFilters.LoadNextPage` through the app wrapper to `Field.LIBRARY`; the next request comes from Core `selectable.nextPage`. Focus-near-end triggering is bounded and de-duplicated by request identity.
+- Details stores Library as its explicit origin and returns to the semantic item where it remains available. Library Back returns Home. Top-level switching is not a Back stack.
+- Final top navigation is Home, Discover, Library, Search. Settings, Addons, and other nonfunctional destinations remain absent.
+
+Runtime checks confirmed All/Movie/Series options; all six Core sort labels; a real Library grid with watched markers and normalized progress bars where Core supplied in-progress state; five-column D-pad navigation; distinct selected/focused filters; and one Library → Details → Library return to the same focused item. The emulator's real Library held enough items for multiple rows. A rapid repeated Details/navigation attempt was interrupted when the Google TV launcher and Play Store reported ANRs and ADB stopped returning screenshots; after relaunch, the TV activity became intermittently unresponsive. No app `FATAL EXCEPTION`, Compose exception, or app ANR was observed in the available logcat, but this system instability prevented completing repeated multi-position Details returns, Library → Home → Library retention, and fresh Discover/Search regression checks. Screenshots were not saved. Runtime pagination and a natural concurrent Library mutation were not observed; pure tests cover bounded pagination, duplicate suppression, stable append/update/remove behavior, and focused-item fallback. Empty-filter behavior was not exercised because the available real filters returned items. Discover and Search remain independently stateful by design; their Phase 4B runtime checks remain the last completed route regression evidence.
+
+Pure tests cover Library mapping, type/sort policy, exhaustive top-level routes and Details origins, snapshot behavior, pagination identity/de-duplication, and disappearing-item focus fallback. The full requested compile, assemble, and unit-test tasks pass (75 tests total, 0 failures). Runtime APK installation used `adb install -r` and preserved app data.
 
 ## Runtime verification gates
 

@@ -18,28 +18,16 @@ class CatalogRepository(private val core: StremioCore) {
 
     fun getLibraryFlow(): Flow<com.stremio.core.models.LibraryWithFilters> = core.library()
 
-    fun getLibraryShelfFlow(): Flow<CatalogShelf> {
-        return core.library().map { libraryWithFilters ->
-            val catalogItems = libraryWithFilters.catalog.map { item ->
-                CatalogItem(
-                    id = item.id,
-                    type = item.type,
-                    name = item.name,
-                    poster = item.poster,
-                    background = null,
-                    releaseInfo = null,
-                    imdbRating = null,
-                    watched = item.watched,
-                    remainingEpisodes = item.remainingEpisodes
-                )
-            }
-            CatalogShelf(
-                title = "Library",
-                items = catalogItems,
-                isLoading = false
-            )
-        }
-    }
+    fun getLibraryWithShelfFlow(): Flow<Pair<com.stremio.core.models.LibraryWithFilters, CatalogShelf>> =
+        core.library().map { library -> library to library.toCatalogShelf() }
+
+    fun getLibraryShelfFlow(): Flow<CatalogShelf> = getLibraryWithShelfFlow().map { it.second }
+
+    private fun com.stremio.core.models.LibraryWithFilters.toCatalogShelf() = CatalogShelf(
+        title = "Library",
+        items = catalog.map { it.toCatalogItem() },
+        isLoading = false,
+    )
 
     fun getDiscover(): com.stremio.core.models.CatalogWithFilters = core.getDiscover()
 
@@ -53,6 +41,10 @@ class CatalogRepository(private val core: StremioCore) {
 
     fun loadLibrary(request: com.stremio.core.models.LibraryWithFilters.LibraryRequest) {
         core.loadLibrary(request)
+    }
+
+    fun loadLibraryNextPage() {
+        core.loadLibraryNextPage()
     }
 
     suspend fun syncLibrary() {

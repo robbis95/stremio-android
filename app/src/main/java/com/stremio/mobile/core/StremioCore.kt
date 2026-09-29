@@ -22,6 +22,7 @@ import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Action
 import com.stremio.core.runtime.msg.ActionCtx
 import com.stremio.core.runtime.msg.ActionCatalogWithFilters
+import com.stremio.core.runtime.msg.ActionLibraryWithFilters
 import pbandk.wkt.Empty
 import com.stremio.core.runtime.msg.ActionLoad
 import com.stremio.core.runtime.msg.ActionPlayer
@@ -293,6 +294,15 @@ class StremioCore(context: Context) {
     fun loadLibrary(request: LibraryWithFilters.LibraryRequest) {
         val selected = LibraryWithFilters.Selected(request = request)
         dispatchLoad(ActionLoad.Args.LibraryWithFilters(selected), Field.LIBRARY)
+    }
+
+    fun loadLibraryNextPage() {
+        val action = Action(
+            Action.Type.LibraryWithFilters(
+                ActionLibraryWithFilters(ActionLibraryWithFilters.Args.LoadNextPage(Empty.defaultInstance)),
+            ),
+        )
+        dispatch(action, Field.LIBRARY)
     }
 
     fun addToLibrary(item: CatalogItem) {

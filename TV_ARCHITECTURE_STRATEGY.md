@@ -466,13 +466,13 @@ Other types should appear only when real installed addons/Core data expose them.
 
 This makes the UI adapt to the user's Stremio configuration instead of pretending every account has the same content universe.
 
-The production top-level shell now contains Home, Discover, and Search, in that order. Library, Addons, and Settings remain absent until their routes are implemented and wired.
+The production top-level shell now contains Home, Discover, Library, and Search, in that order. Addons and Settings remain absent until their routes are implemented and wired.
 
 ---
 
 ## 11. TV state architecture
 
-The TV root no longer collects the full `MainUiState`. The current implementation exposes read-only TV-facing flows for account state, board shelves, selected details, Continue Watching, account-link state, session restoration, board loading, Search query/results/shelves, and a narrow Discover state as needed.
+The TV root no longer collects the full `MainUiState`. The current implementation exposes read-only TV-facing flows for account state, board shelves, selected details, Continue Watching, account-link state, session restoration, board loading, Search query/results/shelves, and narrow Discover and Library projections as needed.
 
 `MainUiState` still exists for the broader/mobile application and combines many unrelated concerns, so future TV routes must continue to avoid falling back to whole-state collection.
 
@@ -487,13 +487,14 @@ Candidate grouped states, only if/when individual flows become unwieldy:
 - `TvDetailsUiState`
 - `TvSearchUiState`
 - `TvDiscoverUiState`
+- `TvLibraryUiState`
 - `TvPlaybackUiState`
 
 The existing MainViewModel may continue exposing narrow read-only flows until grouping has a concrete benefit.
 
 ### Top-level route and focus ownership
 
-The shared navigation exposes Home, Discover, and Search. `TvRouteState` records an explicit, exhaustive Home/Discover/Search origin when Details opens; closing Details returns to that exact route. Home and Search stay independently composed during top-level route switches; Discover composes only while active and saves its own grid/filter state explicitly. Home keeps its semantic `TvFocusMemory`; Search has a separate result-key namespace, requester registry, row-scroll positions, and last keyboard/result target; Discover has a separate saveable `type:id` content key, fallback index, selected filter identity, grid scroll position, and pagination trigger state. Switching top-level destinations is not a back stack and does not write another destination's content memory.
+The shared navigation exposes Home, Discover, Library, and Search. `TvRouteState` records an explicit, exhaustive Home/Discover/Library/Search origin when Details opens; closing Details returns to that exact route. Home and Search stay independently composed during top-level route switches; Discover and Library compose only while active and save their own grid/filter state explicitly. Home keeps its semantic `TvFocusMemory`; Search has a separate result-key namespace, requester registry, row-scroll positions, and last keyboard/result target; Discover and Library each have a separate saveable `type:id` content key, fallback index, selected filter identity, grid scroll position, and pagination trigger state. Switching top-level destinations is not a back stack and does not write another destination's content memory.
 
 MainViewModel exposes read-only `tvSearchQuery`, `tvSearchResults`, and `tvSearchShelves` views of its existing search flows. It also exposes a narrow immutable `TvDiscoverUiState` mapped from existing Core `CatalogWithFilters` and `CatalogShelf` state. The TV screen owns focus and presentation; Core remains the sole addon-search and Discover backend.
 
@@ -505,11 +506,23 @@ The grid uses five fixed columns at the tested 960×540 dp viewport, 144 dp post
 
 Core's `CatalogWithFilters.selectable.nextPage` is the only pagination source. The app-side `StremioCore.loadDiscoverNextPage()` dispatches the generated `ActionCatalogWithFilters.LoadNextPage` action to `Field.DISCOVER`. A page is requested when a user-focused item reaches the last currently loaded row, only after the focus index advances; the next-page request identity is de-duplicated in the ViewModel. Appending items does not initiate another request just because item count changed and does not reset semantic focus or scroll. Initial loading leaves filters navigable, and a later page error leaves existing items present.
 
+### Production Library state and interaction stability
+
+The production Library uses Core's existing `LibraryWithFilters` selection and Core-provided `LibraryRequest` values for each type and sort option. `TvApp` observes only a narrow immutable `TvLibraryUiState`; raw Core state stays inside repository/ViewModel boundaries. The app dispatches `ActionLibraryWithFilters.LoadNextPage` to `Field.LIBRARY` and uses Core's `selectable.nextPage` as the pagination source. It does not manually increment page numbers.
+
+`LibraryItem` is mapped loss-minimally to `CatalogItem`: id, type, name, poster and poster shape, watched state, remaining episodes, supported behavior hints, and real progress from `timeOffset / duration`, normalized and clamped to the presentation range 0..1. Unknown progress stays null; absent LibraryItem metadata is not fabricated.
+
+Library type labels retain null as All, known Movie/Series labels, and humanized unknown types. The supported Core sorts remain LastWatched, Name, NameReverse, TimesWatched, Watched, and NotWatched, shown as Last watched, Name A–Z, Name Z–A, Most watched, Watched first, and Unwatched first.
+
+The five-column grid and poster geometry match Discover. Library has independent semantic focus and scroll memory. Its pure interaction snapshot is keyed by logical selection (type + sort), not page: same-selection emissions refresh item data while retaining relative order for survivors, dropping removed items, and appending newly exposed items in incoming Core order. An explicit type/sort change adopts Core's authoritative order. Pagination preserves the snapshot, focus, and scroll; only focus reaching the loaded tail may trigger the current Core nextPage request, and request identity suppresses duplicates. If the focused item disappears, nearest prior index is restored when possible, otherwise focus moves to the remaining items or filters/nav.
+
+Runtime verified All/Movie/Series, all six labels, real watched and progress presentation, selected-versus-focused filters, five-column movement, and one Details return to the same Library item. A rapid repeated navigation attempt coincided with Google TV launcher/Play Store ANRs and ADB screenshot disconnection, preventing repeated Details, top-level retention, and fresh Discover/Search regression checks; available app logs showed no app fatal, Compose exception, or app ANR. Screenshots were not saved. Runtime pagination, a natural sync mutation, and an empty filter were not exercised; pure tests cover those state policies. The production route returns to Home on Back, while Details returns to its explicit Library origin. The resulting top-level order is Home, Discover, Library, Search.
+
 ### Production Home ownership
 
 `TvApp` supplies the existing board-shelf and Continue Watching flows to a small immutable `TvHomePresentation`; it does not introduce another backend state model. That presentation adds only layout semantics: a non-focusable hero section, an optional stable `tv:continue-watching` shelf, and board shelves that retain original board indices. Its explicit semantic-key-to-LazyColumn-index mapping keeps focus restoration independent of the hero and optional shelf. Continue Watching enrichment is a pure presentation transformation that matches existing board previews by `type + id` and preserves all library progress/playback state.
 
-The hero observes the focused `CatalogItem` preview only. Its visual candidate settles after a 150 ms dwell, with no MetaDetails request on focus movement. Shelf visibility invokes the existing bounded `MainViewModel.onShelfVisible(originalBoardShelfIndex)` policy; focus movement itself does not preload catalogs. The Home hero scrolls as part of the same feed. Search and Discover are real top-level destinations; Library and Settings controls remain absent until their routes can complete navigation.
+The hero observes the focused `CatalogItem` preview only. Its visual candidate settles after a 150 ms dwell, with no MetaDetails request on focus movement. Shelf visibility invokes the existing bounded `MainViewModel.onShelfVisible(originalBoardShelfIndex)` policy; focus movement itself does not preload catalogs. The Home hero scrolls as part of the same feed. Search, Discover, and Library are real top-level destinations; Settings controls remain absent until their route can complete navigation.
 
 Do not split the ViewModel merely for aesthetic architecture.
 

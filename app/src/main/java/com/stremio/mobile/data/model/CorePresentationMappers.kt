@@ -3,6 +3,40 @@ package com.stremio.mobile.data.model
 import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.core.utils.parseStreamDescription
 
+/** Library state has playback offsets in the Core state. Convert their ratio to the UI's 0..1 scale. */
+fun com.stremio.core.types.library.LibraryItem.toCatalogItem(): CatalogItem {
+    val duration = state.duration.toDouble()
+    val progress = if (duration > 0.0) {
+        (state.timeOffset.toDouble() / duration).coerceIn(0.0, 1.0).toFloat()
+    } else {
+        null
+    }
+    return CatalogItem(
+        id = id,
+        type = type,
+        name = name,
+        poster = poster,
+        background = null,
+        releaseInfo = null,
+        imdbRating = null,
+        progress = progress,
+        watched = watched,
+        remainingEpisodes = remainingEpisodes,
+        posterShape = when (posterShape) {
+            com.stremio.core.types.resource.PosterShape.POSTER -> CatalogPosterShape.Poster
+            com.stremio.core.types.resource.PosterShape.LANDSCAPE -> CatalogPosterShape.Landscape
+            com.stremio.core.types.resource.PosterShape.SQUARE -> CatalogPosterShape.Square
+            else -> null
+        },
+        inLibrary = true,
+        behaviorHints = CatalogBehaviorHints(
+            defaultVideoId = behaviorHints.defaultVideoId,
+            featuredVideoId = behaviorHints.featuredVideoId,
+            hasScheduledVideos = behaviorHints.hasScheduledVideos,
+        ),
+    )
+}
+
 fun com.stremio.core.types.resource.MetaItemPreview.toCatalogItem(
     imdbRating: String? = null,
 ): CatalogItem = CatalogItem(

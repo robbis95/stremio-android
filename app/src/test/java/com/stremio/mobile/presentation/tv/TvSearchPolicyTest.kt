@@ -56,7 +56,7 @@ class TvSearchPolicyTest {
     }
 
     @Test fun onlyWiredTopLevelDestinationsAreExposed() {
-        assertEquals(listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Discover, TvTopLevelRoute.Search), tvTopLevelDestinations)
+        assertEquals(listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Discover, TvTopLevelRoute.Library, TvTopLevelRoute.Search), tvTopLevelDestinations)
         assertEquals(TvRoute.Discover, TvRouteState(TvRoute.Home).select(TvTopLevelRoute.Discover).route)
         assertEquals(TvRoute.Search, TvRouteState(TvRoute.Home).select(TvTopLevelRoute.Search).route)
     }

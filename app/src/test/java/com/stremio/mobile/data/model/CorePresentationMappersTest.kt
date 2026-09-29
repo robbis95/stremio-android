@@ -20,6 +20,68 @@ import org.junit.Test
 
 class CorePresentationMappersTest {
     @Test
+    fun `library item mapping preserves its TV fields and normalizes state progress`() {
+        val item = com.stremio.core.types.library.LibraryItem(
+            id = "library-1",
+            type = "series",
+            name = "Library series",
+            poster = "poster.jpg",
+            posterShape = PosterShape.LANDSCAPE,
+            state = com.stremio.core.types.library.LibraryItemState(
+                timeOffset = 25,
+                duration = 100,
+                videoId = "s1:e2",
+                noNotif = false,
+            ),
+            behaviorHints = MetaItemBehaviorHints(
+                defaultVideoId = "default-video",
+                featuredVideoId = "featured-video",
+                hasScheduledVideos = true,
+            ),
+            deepLinks = MetaItemDeepLinks(),
+            progress = 25.0,
+            watched = true,
+            notifications = 3,
+            remainingEpisodes = 3,
+        ).toCatalogItem()
+
+        assertEquals("library-1", item.id)
+        assertEquals("series", item.type)
+        assertEquals("Library series", item.name)
+        assertEquals("poster.jpg", item.poster)
+        assertEquals(CatalogPosterShape.Landscape, item.posterShape)
+        assertTrue(item.watched)
+        assertEquals(3, item.remainingEpisodes)
+        assertEquals(0.25f, item.progress!!, 0.0001f)
+        assertEquals(true, item.inLibrary)
+        assertEquals("default-video", item.behaviorHints.defaultVideoId)
+        assertEquals("featured-video", item.behaviorHints.featuredVideoId)
+        assertTrue(item.behaviorHints.hasScheduledVideos)
+        assertNull(item.background)
+        assertNull(item.logo)
+        assertNull(item.description)
+    }
+
+    @Test
+    fun `library item mapping clamps state ratio and leaves unknown progress absent`() {
+        fun item(timeOffset: Long, duration: Long) = com.stremio.core.types.library.LibraryItem(
+            id = "id",
+            type = "movie",
+            name = "Movie",
+            posterShape = PosterShape.POSTER,
+            state = com.stremio.core.types.library.LibraryItemState(timeOffset, duration, noNotif = false),
+            behaviorHints = MetaItemBehaviorHints(hasScheduledVideos = false),
+            deepLinks = MetaItemDeepLinks(),
+            progress = 0.0,
+            watched = false,
+            notifications = 0,
+        ).toCatalogItem()
+
+        assertEquals(1f, item(150, 100).progress!!, 0f)
+        assertNull(item(0, 0).progress)
+    }
+
+    @Test
     fun `rich preview maps presentation metadata and keeps existing artwork and release info`() {
         val item = preview(
             posterShape = PosterShape.LANDSCAPE,

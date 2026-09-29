@@ -20,6 +20,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.stremio.mobile.presentation.tv.focus.rememberTvFocusMemory
 import com.stremio.mobile.presentation.tv.focus.rememberTvDiscoverFocusMemory
+import com.stremio.mobile.presentation.tv.focus.rememberTvLibraryFocusMemory
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
 import com.stremio.mobile.presentation.tv.theme.TvTheme
@@ -38,14 +39,17 @@ internal fun TvApp(viewModel: MainViewModel) {
     val searchResults by viewModel.tvSearchResults.collectAsStateWithLifecycle()
     val searchShelves by viewModel.tvSearchShelves.collectAsStateWithLifecycle()
     val discoverState by viewModel.tvDiscover.collectAsStateWithLifecycle()
+    val libraryState by viewModel.tvLibrary.collectAsStateWithLifecycle()
     var routeName by rememberSaveable { mutableStateOf(TvRoute.Login.name) }
     var detailsOriginName by rememberSaveable { mutableStateOf(TvTopLevelRoute.Home.name) }
     var restoreFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var searchFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var discoverFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
+    var libraryFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var detailsRequested by remember { mutableStateOf(false) }
     val focusMemory = rememberTvFocusMemory()
     val discoverFocusMemory = rememberTvDiscoverFocusMemory()
+    val libraryFocusMemory = rememberTvLibraryFocusMemory()
     val route = runCatching { TvRoute.valueOf(routeName) }.getOrDefault(TvRoute.Login)
     val detailsOrigin = TvTopLevelRoute.valueOf(detailsOriginName)
     val navRequesters = remember { tvTopLevelDestinations.associateWith { FocusRequester() } }
@@ -76,11 +80,13 @@ internal fun TvApp(viewModel: MainViewModel) {
             routeName = when (detailsOrigin) {
                 TvTopLevelRoute.Home -> TvRoute.Home.name
                 TvTopLevelRoute.Discover -> TvRoute.Discover.name
+                TvTopLevelRoute.Library -> TvRoute.Library.name
                 TvTopLevelRoute.Search -> TvRoute.Search.name
             }
             when (detailsOrigin) {
                 TvTopLevelRoute.Home -> restoreFocusRequestId++
                 TvTopLevelRoute.Discover -> discoverFocusRequestId++
+                TvTopLevelRoute.Library -> libraryFocusRequestId++
                 TvTopLevelRoute.Search -> searchFocusRequestId++
             }
         }
@@ -93,6 +99,7 @@ internal fun TvApp(viewModel: MainViewModel) {
         when (detailsOrigin) {
             TvTopLevelRoute.Home -> restoreFocusRequestId++
             TvTopLevelRoute.Discover -> discoverFocusRequestId++
+            TvTopLevelRoute.Library -> libraryFocusRequestId++
             TvTopLevelRoute.Search -> searchFocusRequestId++
         }
         Unit
@@ -103,6 +110,10 @@ internal fun TvApp(viewModel: MainViewModel) {
         restoreFocusRequestId++
     }
     BackHandler(enabled = route == TvRoute.Discover) {
+        routeName = TvRoute.Home.name
+        restoreFocusRequestId++
+    }
+    BackHandler(enabled = route == TvRoute.Library) {
         routeName = TvRoute.Home.name
         restoreFocusRequestId++
     }
@@ -121,11 +132,12 @@ internal fun TvApp(viewModel: MainViewModel) {
                 )
                 else -> {
                     Column(Modifier.fillMaxSize()) {
-                        if (route == TvRoute.Home || route == TvRoute.Discover || route == TvRoute.Search) {
+                        if (route == TvRoute.Home || route == TvRoute.Discover || route == TvRoute.Library || route == TvRoute.Search) {
                             TvTopNavigation(
                                 selected = when (route) {
                                     TvRoute.Home -> TvTopLevelRoute.Home
                                     TvRoute.Discover -> TvTopLevelRoute.Discover
+                                    TvRoute.Library -> TvTopLevelRoute.Library
                                     TvRoute.Search -> TvTopLevelRoute.Search
                                     TvRoute.Login, TvRoute.Details -> error("Top navigation is hidden for $route")
                                 },
@@ -137,6 +149,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                                     when (destination) {
                                         TvTopLevelRoute.Home -> restoreFocusRequestId++
                                         TvTopLevelRoute.Discover -> discoverFocusRequestId++
+                                        TvTopLevelRoute.Library -> libraryFocusRequestId++
                                         TvTopLevelRoute.Search -> searchFocusRequestId++
                                     }
                                 },
@@ -180,6 +193,23 @@ internal fun TvApp(viewModel: MainViewModel) {
                                     onLoadNextPage = viewModel::loadDiscoverNextPage,
                                 )
                             }
+                            if (route == TvRoute.Library) {
+                                TvLibraryScreen(
+                                    state = libraryState,
+                                    memory = libraryFocusMemory,
+                                    isActive = true,
+                                    restoreFocusRequestId = libraryFocusRequestId,
+                                    navFocusRequester = navRequesters.getValue(TvTopLevelRoute.Library),
+                                    onSelectFilter = viewModel::selectLibraryFilter,
+                                    onOpenDetails = { item ->
+                                        detailsRequested = true
+                                        detailsOriginName = TvTopLevelRoute.Library.name
+                                        viewModel.openDetails(item)
+                                        routeName = TvRouteState(TvRoute.Library).openDetails().route.name
+                                    },
+                                    onLoadNextPage = viewModel::loadLibraryNextPage,
+                                )
+                            }
                             TvSearchScreen(
                                 query = searchQuery,
                                 results = searchResults,
@@ -209,5 +239,6 @@ internal fun TvApp(viewModel: MainViewModel) {
 private fun TvTopLevelRoute.toRoute(): TvRoute = when (this) {
     TvTopLevelRoute.Home -> TvRoute.Home
     TvTopLevelRoute.Discover -> TvRoute.Discover
+    TvTopLevelRoute.Library -> TvRoute.Library
     TvTopLevelRoute.Search -> TvRoute.Search
 }

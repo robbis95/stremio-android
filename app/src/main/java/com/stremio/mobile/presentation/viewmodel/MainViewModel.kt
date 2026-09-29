@@ -24,6 +24,12 @@ import com.stremio.mobile.presentation.state.*
 import com.stremio.mobile.presentation.tv.DiscoverPageRequestTracker
 import com.stremio.mobile.presentation.tv.DiscoverSelectableRequest
 import com.stremio.mobile.presentation.tv.TvDiscoverUiState
+import com.stremio.mobile.presentation.tv.TvLibraryUiState
+import com.stremio.mobile.presentation.tv.LibraryPageRequestTracker
+import com.stremio.mobile.presentation.tv.TvLibraryOrderSnapshot
+import com.stremio.mobile.presentation.tv.selectionIdentity
+import com.stremio.mobile.presentation.tv.stableLibraryOrder
+import com.stremio.mobile.presentation.tv.toTvLibraryUiState
 import com.stremio.mobile.presentation.tv.preferredDiscoverRequest
 import com.stremio.mobile.presentation.tv.toTvDiscoverUiState
 import com.stremio.mobile.presentation.tv.toTvDiscoverFilterGroups
@@ -124,6 +130,11 @@ class MainViewModel(
     internal val tvDiscover: StateFlow<TvDiscoverUiState> = _tvDiscover.asStateFlow()
     private val discoverPageRequests = DiscoverPageRequestTracker()
     private val libraryWithFilters = MutableStateFlow<com.stremio.core.models.LibraryWithFilters?>(null)
+    private val _tvLibrary = MutableStateFlow(TvLibraryUiState())
+    internal val tvLibrary: StateFlow<TvLibraryUiState> = _tvLibrary.asStateFlow()
+    private var tvLibraryOrderSnapshot = TvLibraryOrderSnapshot(selection = null, items = emptyList())
+    private var pendingLibraryRequest: com.stremio.core.models.LibraryWithFilters.LibraryRequest? = null
+    private val libraryPageRequests = LibraryPageRequestTracker()
     private val isDiscoverSeeAll = MutableStateFlow(false)
     private val profileSettings = MutableStateFlow<com.stremio.core.types.profile.Profile.Settings?>(null)
     private val serverSettings = MutableStateFlow<com.stremio.core.models.StreamingServer.Settings?>(null)
@@ -1040,13 +1051,27 @@ class MainViewModel(
 
     private fun observeLibrary() {
         viewModelScope.launch {
-            catalogRepository.getLibraryFlow().collect { libraryWithFiltersVal ->
+            catalogRepository.getLibraryWithShelfFlow().collect { (libraryWithFiltersVal, shelf) ->
                 libraryWithFilters.value = libraryWithFiltersVal
-            }
-        }
-        viewModelScope.launch {
-            catalogRepository.getLibraryShelfFlow().collect { shelf ->
-                library.value = shelf
+                val coreRequest = libraryWithFiltersVal.selected?.request
+                val pending = pendingLibraryRequest
+                if (pending != null && coreRequest != pending) {
+                    _tvLibrary.value = _tvLibrary.value.copy(isLoading = true)
+                    return@collect
+                }
+                if (pending == coreRequest) pendingLibraryRequest = null
+
+                val identity = coreRequest?.selectionIdentity()
+                tvLibraryOrderSnapshot = stableLibraryOrder(
+                    previous = tvLibraryOrderSnapshot,
+                    selection = identity,
+                    incoming = shelf.items,
+                )
+                library.value = shelf.copy(items = tvLibraryOrderSnapshot.items)
+                _tvLibrary.value = libraryWithFiltersVal.toTvLibraryUiState(
+                    items = tvLibraryOrderSnapshot.items,
+                    loading = pendingLibraryRequest != null,
+                )
             }
         }
     }
@@ -2133,6 +2158,14 @@ class MainViewModel(
     }
 
     fun selectLibraryFilter(request: com.stremio.core.models.LibraryWithFilters.LibraryRequest) {
+        pendingLibraryRequest = request
+        _tvLibrary.value = _tvLibrary.value.copy(
+            selectedRequest = request,
+            logicalSelection = request.selectionIdentity(),
+            items = emptyList(),
+            nextPageRequest = null,
+            isLoading = true,
+        )
         viewModelScope.launch {
             try {
                 catalogRepository.loadLibrary(request)
@@ -2140,6 +2173,15 @@ class MainViewModel(
                 Timber.e(e, "Failed to load library request")
             }
         }
+    }
+
+    fun loadLibraryNextPage(requestIdentity: String) {
+        val state = _tvLibrary.value
+        val request = state.nextPageRequest ?: return
+        if (requestIdentity != request.toString()) return
+        if (state.selectedRequest?.selectionIdentity() != request.selectionIdentity()) return
+        if (!libraryPageRequests.tryMark(requestIdentity)) return
+        catalogRepository.loadLibraryNextPage()
     }
 
     fun selectDiscoverFilter(request: com.stremio.core.types.addon.ResourceRequest) {

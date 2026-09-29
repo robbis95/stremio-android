@@ -74,6 +74,7 @@ internal fun TvTopNavigation(
                     text = when (destination) {
                         TvTopLevelRoute.Home -> "Home"
                         TvTopLevelRoute.Discover -> "Discover"
+                        TvTopLevelRoute.Library -> "Library"
                         TvTopLevelRoute.Search -> "Search"
                     },
                     style = MaterialTheme.typography.labelLarge,

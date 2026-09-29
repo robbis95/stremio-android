@@ -151,6 +151,15 @@ Later phase:
 - episode navigation
 - reuse current playback engines
 
+## Engineering references
+
+Implementation details, capability boundaries, and performance rules are maintained in:
+
+- `TV_ARCHITECTURE_STRATEGY.md`
+- `TV_CORE_CAPABILITY_AUDIT.md`
+
+Codex tasks should read these before making architecture decisions that touch Stremio Core usage, metadata mapping, search, playback, state ownership, TV Material, loading strategy, or performance.
+
 ## Architecture principles
 
 ### Reuse
@@ -397,3 +406,14 @@ Before Phase 3B, Phase 2 must be:
 2. stress-tested on Google TV emulator when available
 
 Until emulator access returns, do not start Phase 3B or change the unverified navigation behavior.
+
+Safe bounded work that may proceed before emulator access returns:
+- preserve currently discarded Core preview metadata in Android presentation models, with mapper tests
+- preserve episode progress/overview/upcoming metadata needed by future TV episode UI
+- preserve stream behavior hints needed for later binge-compatible stream selection
+- reduce TV dependency on the monolithic `MainUiState` through narrow state slices without changing focus behavior
+- audit and stage a TV-only migration toward `androidx.tv:tv-material` without replacing the custom Phase 2 focus restoration model
+- document/prepare LocalSearch and search-history bridge work without inventing duplicate TV-only backend state
+- prepare performance benchmark/Baseline Profile infrastructure once stable test journeys exist
+
+The next coding task should prioritize data preservation before building the final Home hero.

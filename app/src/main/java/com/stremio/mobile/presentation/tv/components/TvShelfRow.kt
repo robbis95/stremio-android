@@ -33,8 +33,8 @@ internal fun TvShelfRow(
     androidx.compose.runtime.DisposableEffect(shelfKey, listState) {
         onDispose { if (rowStates[shelfKey] === listState) rowStates.remove(shelfKey) }
     }
-    LazyRow(state = listState, contentPadding = PaddingValues(horizontal = TvDimens.safeHorizontal, vertical = 18.dp),
-        horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.fillMaxWidth()) {
+    LazyRow(state = listState, contentPadding = PaddingValues(horizontal = TvDimens.safeHorizontal, vertical = TvDimens.shelfRowVerticalPadding),
+        horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
         itemsIndexed(items, key = { _, item -> contentFocusKey(item.type, item.id) }) { index, item ->
             val key = contentKeys[index]
             val requester = registry.requester("$shelfKey|$key")

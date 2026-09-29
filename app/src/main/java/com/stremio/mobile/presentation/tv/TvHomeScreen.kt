@@ -27,6 +27,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyListState
@@ -68,6 +69,8 @@ internal fun TvHomeScreen(
     val latestFocusShelves by rememberUpdatedState(focusShelves)
     val latestLoading by rememberUpdatedState(isBoardLoading)
     val latestMemory by rememberUpdatedState(focusMemory)
+    val density = LocalDensity.current
+    var pendingTraversal by remember { mutableStateOf<TvFocusLocation?>(null) }
 
     suspend fun restore(location: TvFocusLocation) {
         val targetShelfIndex = latestKeys.indexOf(location.shelfKey)
@@ -111,22 +114,29 @@ internal fun TvHomeScreen(
         registry.retain(valid)
     }
 
-    Column(Modifier.fillMaxSize().padding(top = 34.dp, bottom = 30.dp), verticalArrangement = Arrangement.Center) {
+    Column(
+        Modifier.fillMaxSize().padding(top = TvDimens.homeTopInset, bottom = TvDimens.homeBottomInset),
+        verticalArrangement = Arrangement.Top,
+    ) {
         Row(
             modifier = Modifier.padding(horizontal = TvDimens.safeHorizontal),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Image(painterResource(R.drawable.ic_stremio_splash_logo), "Stremio", Modifier.height(28.dp))
+            Image(painterResource(R.drawable.ic_stremio_splash_logo), "Stremio", Modifier.height(TvDimens.homeBrandMarkHeight))
             Text("Stremio", style = MaterialTheme.typography.titleMedium, color = TvColors.accent)
         }
         Spacer(Modifier.height(4.dp))
         Text("Home", Modifier.padding(horizontal = TvDimens.safeHorizontal), style = MaterialTheme.typography.headlineLarge, color = TvColors.primaryText)
         Spacer(Modifier.height(TvDimens.titleSpacing))
-        LazyColumn(state = verticalState, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(TvDimens.shelfSpacing)) {
+        LazyColumn(
+            state = verticalState,
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            verticalArrangement = Arrangement.spacedBy(TvDimens.shelfSpacing),
+        ) {
             itemsIndexed(shelves, key = { index, _ -> shelfKeys[index] }) { index, shelf ->
                 Column {
-                    Text(shelf.title, Modifier.padding(start = TvDimens.safeHorizontal, top = 8.dp, bottom = 2.dp), style = MaterialTheme.typography.titleLarge, color = TvColors.primaryText)
+                    Text(shelf.title, Modifier.padding(start = TvDimens.safeHorizontal, top = TvDimens.shelfTitleTop, bottom = TvDimens.shelfTitleBottom), style = MaterialTheme.typography.titleLarge, color = TvColors.primaryText)
                     when {
                         shelf.items.isNotEmpty() -> TvShelfRow(
                             shelfKeys[index], shelf.items, isActive, registry, rowStates,
@@ -145,7 +155,7 @@ internal fun TvHomeScreen(
                                     val remembered = focusMemory.contentForShelf(next.key)
                                     val item = next.items.firstOrNull { contentFocusKey(it.type, it.id) == remembered } ?: next.items.first()
                                     val target = TvFocusLocation(next.key, contentFocusKey(item.type, item.id), focusShelves.indexOfFirst { it.key == next.key })
-                                    pendingRestore = target
+                                    pendingTraversal = target
                                 }
                             },
                             onActivate = { item, content ->
@@ -170,5 +180,38 @@ internal fun TvHomeScreen(
     LaunchedEffect(isActive, pendingRestore) {
         val target = pendingRestore ?: return@LaunchedEffect
         if (isActive) restore(target)
+    }
+    LaunchedEffect(isActive, pendingTraversal, shelfKeys) {
+        val target = pendingTraversal ?: return@LaunchedEffect
+        if (!isActive) return@LaunchedEffect
+        val targetShelfIndex = latestKeys.indexOf(target.shelfKey)
+        if (targetShelfIndex < 0) {
+            pendingTraversal = null
+            return@LaunchedEffect
+        }
+
+        val visibleTarget = verticalState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == target.shelfKey }
+        if (visibleTarget == null) {
+            val sourceKey = focusedLocation?.shelfKey
+            val referenceHeight = verticalState.layoutInfo.visibleItemsInfo
+                .firstOrNull { it.key == sourceKey }
+                ?.size
+                ?: with(density) { (TvDimens.posterHeight + 48.dp).roundToPx() }
+            val viewportHeight = verticalState.layoutInfo.viewportSize.height
+            val keepPreviousShelfVisible = (viewportHeight - referenceHeight).coerceAtLeast(0)
+            verticalState.animateScrollToItem(targetShelfIndex, scrollOffset = -keepPreviousShelfVisible)
+        }
+
+        val row = snapshotFlow { rowStates[target.shelfKey] }.first { it != null }!!
+        val shelf = latestShelves.getOrNull(targetShelfIndex)
+        val itemIndex = shelf?.items?.indexOfFirst { contentFocusKey(it.type, it.id) == target.contentKey } ?: -1
+        if (itemIndex >= 0) {
+            row.scrollToItem(itemIndex)
+            snapshotFlow { row.layoutInfo.visibleItemsInfo.any { it.key == target.contentKey } }.first { it }
+            registry.requester("${target.shelfKey}|${target.contentKey}").requestFocus()
+            focusedLocation = target
+            latestMemory.remember(target.shelfKey, target.contentKey, target.shelfIndex)
+        }
+        pendingTraversal = null
     }
 }

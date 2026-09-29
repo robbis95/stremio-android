@@ -24,9 +24,18 @@ internal object TvDimens {
     val cardRadius: Dp = 16.dp
     val controlRadius: Dp = 12.dp
     val focusBorder: Dp = 3.dp
-    val shelfSpacing: Dp = 30.dp
-    val titleSpacing: Dp = 12.dp
+    val homeTopInset: Dp = 18.dp
+    val homeBottomInset: Dp = 12.dp
+    val homeBrandMarkHeight: Dp = 22.dp
+    val shelfSpacing: Dp = 16.dp
+    val titleSpacing: Dp = 8.dp
+    val shelfTitleTop: Dp = 4.dp
+    val shelfTitleBottom: Dp = 2.dp
+    val shelfRowVerticalPadding: Dp = 10.dp
+    val posterImageHeight: Dp = 178.dp
+    val posterContentPadding: Dp = 6.dp
+    val posterContentSpacing: Dp = 8.dp
     val buttonHeight: Dp = 56.dp
-    val posterWidth: Dp = 184.dp
-    val posterHeight: Dp = 306.dp
+    val posterWidth: Dp = 144.dp
+    val posterHeight: Dp = 242.dp
 }

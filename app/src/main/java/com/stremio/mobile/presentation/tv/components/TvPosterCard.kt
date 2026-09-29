@@ -71,11 +71,11 @@ internal fun TvPosterCard(
             .shadow(if (isFocused) 14.dp else 2.dp, shape, clip = false)
             .background(TvColors.surface, shape)
             .tvFocusTreatment(isFocused, TvDimens.controlRadius, TvColors.divider)
-            .padding(7.dp),
-        verticalArrangement = Arrangement.spacedBy(9.dp),
+            .padding(TvDimens.posterContentPadding),
+        verticalArrangement = Arrangement.spacedBy(TvDimens.posterContentSpacing),
     ) {
         AsyncImage(model = item.poster, contentDescription = item.name, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().height(238.dp).clip(shape).border(1.dp, TvColors.divider, shape))
+            modifier = Modifier.fillMaxWidth().height(TvDimens.posterImageHeight).clip(shape).border(1.dp, TvColors.divider, shape))
         Text(item.name, modifier = Modifier.padding(horizontal = 5.dp), color = TvColors.primaryText,
             style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }

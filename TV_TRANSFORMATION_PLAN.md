@@ -223,7 +223,7 @@ Runtime checks still required:
 - launcher/session restore
 
 ### Phase 2 — Navigation/focus foundation
-Status: implemented, compiled, assembled, unit-tested, installed and smoke-launched on the Google TV ARM64 emulator. Manual navigation stress verification is still pending.
+Status: implemented, compiled, assembled, unit-tested, installed, and runtime-checked on the Google TV ARM64 emulator. The previously reported focus warning root cause remains unverified, so Phase 2 is not marked complete.
 
 Implemented:
 - reusable TV poster card
@@ -246,16 +246,26 @@ Verified:
 - basic D-pad smoke input does not crash
 - the Details return-focus regression reproduced from the emulator recording is fixed: 10/10 Home → Details → Back cycles returned focus to the exact same semantic item on the first Home frame, including items farther right in the shelf
 - Details paints an opaque TV background; title/body contrast and visible Back focus were confirmed on emulator
-- no AndroidRuntime/FATAL or ANR was observed during the regression run; logcat did emit 16 non-fatal `FocusRelatedWarning` messages saying a `FocusRequester` was not initialized
+- no AndroidRuntime/FATAL or ANR was observed during the regression run; one earlier runtime session reported 16 non-fatal `FocusRelatedWarning` messages saying a `FocusRequester` was not initialized
+
+Runtime-polish gate (2026-09-29):
+- emulator display: 1920×1080 physical pixels at 320 dpi (2.0 density); logical viewport approximately 960×540 dp
+- the original 184×306 dp poster cards, 18 dp row padding, 30 dp shelf gap, and vertically centered Home `Column` left one shelf dominant in the viewport
+- Home now uses a top-aligned header and a `LazyColumn` that fills the remaining height; reusable TV tokens size posters at 144×242 dp with a 178 dp image, 10 dp row padding, and 16 dp shelf spacing
+- initial Home shows one complete shelf and about 30% of the next shelf; posters and titles remain readable at the tested TV viewport
+- Down from shelf 1 moves the list only enough to expose the focused card; the prior shelf remains partly visible. The tested shelf 1 → 2 → 3 → 2 → 1 path retained the remembered second-shelf item and restored the original first-shelf item
+- ordinary Up/Down target selection is unchanged: enter a shelf at its remembered semantic item when available, otherwise its first item. Explicit route restoration still uses the existing `scrollToItem` path
+- ten post-change Home → Details → Back cycles returned to the same semantic item; before/after screenshots were byte-identical
+- after catalogs had populated, a 30-second idle interval produced byte-identical Home screenshots and no observed focus or scroll change. No new catalog shelf emission was observed during that interval, so active focus behavior during a newly arriving emission still needs a targeted check
+- warning investigation: logcat was cleared before controlled pre-change Home horizontal, Up/Down, Details, and Back sequences; zero `FocusRelatedWarning`/`FocusRequester`/`not initialized` matches were captured. The same warning search returned zero after the post-change 10-cycle Details test and idle check. The earlier 16-message log was not available, so its exact stack/path and root cause cannot be established from this run. No warning suppression or speculative requester change was made
 
 Still required:
-- investigate the non-fatal `FocusRelatedWarning` messages
-- manual multi-shelf Up/Down and exact per-shelf focus-memory stress verification
-- validate real catalog emissions do not steal focus
-- visual review of the complete Phase 3A experience at TV viewing distance
+- reproduce the earlier 16 `FocusRelatedWarning` messages with their complete stack context and identify their source
+- validate that a newly arriving real catalog/addon emission does not steal focus or reposition the active shelf
+- complete visual review of the full Phase 3A experience at TV viewing distance
 
 ### Phase 3A — TV visual foundation
-Status: implemented in source; Phase 2 runtime stress verification is still pending.
+Status: implemented in source; Home viewport and multi-shelf movement received a runtime visual pass. The Phase 2 focus-warning and live-emission checks remain open.
 
 Implemented:
 - TV-specific color, typography, spacing, and focus design system

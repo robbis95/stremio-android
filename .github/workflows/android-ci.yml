@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - master
+      - feat/android-tv
   workflow_dispatch:
 
 permissions:
@@ -14,6 +15,7 @@ permissions:
 jobs:
   build:
     name: Build Debug APK
+    if: github.ref != 'refs/heads/feat/android-tv'
     runs-on: ubuntu-latest
 
     steps:
@@ -46,3 +48,8 @@ jobs:
           name: stremio-mobile-debug-apks
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  tv-native-arm64:
+    name: Build TV Native ARM64 Debug APK
+    if: github.ref == 'refs/heads/feat/android-tv'
+    uses: ./.github/workflows/android-tv-native-arm64.yml

@@ -208,7 +208,7 @@ The MPV module's native runtime outputs are vendored for supported ABIs:
 
 The MPV module intentionally excludes `libc++_shared.so` and uses the app-packaged C++ runtime.
 
-The app also tracks the shared C++ runtime used by those outputs. `libstream_server.so` is generated from the pinned `stream-server` submodule; it is not committed. The release workflow builds it for all supported ABIs and injects the artifacts before release APK assembly. The ordinary `android-ci` and `android-nightly` debug APK workflows do not inject the stream-server library, so those APKs cannot run the native Torrent server.
+The app also tracks the shared C++ runtime used by those outputs. `libstream_server.so` is generated from the pinned `stream-server` submodule; it is not committed. The release workflow builds it for all supported ABIs and injects the artifacts before release APK assembly. The standard debug jobs in `android-ci` and `android-nightly` do not inject the stream-server library. On direct pushes to `feat/android-tv`, `android-ci` delegates to the separate ARM64 native debug job instead.
 
 Fast Kotlin work and normal debug assembly do not rebuild Rust. ARM64 native TV playback has an explicit build and APK verification path. It requires stable Rust with the `aarch64-linux-android` target, `cargo-ndk`, `pkg-config`, CMake, Ninja, an Android NDK, and the release-pinned vcpkg checkout (`84bab45d415d22042bd0b9081aea57f362da3f35`). Set `VCPKG_ROOT` to that checkout; the task installs the pinned stream-server manifest dependencies into an ignored directory under `app/build/` and requires the Android ARM64 OpenSSL headers and libraries to be present. The native task fails early with an actionable prerequisite message when a required tool is missing.
 

@@ -1,24 +1,14 @@
 name: Android TV Native ARM64 Debug APK
 
 on:
-  push:
-    branches:
-      - feat/android-tv
-    paths:
-      - ".github/scripts/build-stream-server-android-arm64.sh"
-      - ".github/workflows/android-tv-native-arm64.yml"
-      - "app/**"
-      - "build.gradle.kts"
-      - "buildSrc/**"
-      - "settings.gradle.kts"
-      - "stream-server"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-tv-native-arm64
+  group: android-tv-native-arm64-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

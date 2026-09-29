@@ -15,6 +15,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -35,6 +36,10 @@ import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.data.model.CatalogShelf
 import com.stremio.mobile.R
 import com.stremio.mobile.presentation.tv.components.TvShelfRow
+import com.stremio.mobile.presentation.tv.components.TvRowScrollPosition
+import com.stremio.mobile.presentation.tv.focus.VisibleFocusItem
+import com.stremio.mobile.presentation.tv.focus.adjacentFocusableShelf
+import com.stremio.mobile.presentation.tv.focus.closestVisibleFocusItem
 import com.stremio.mobile.presentation.tv.focus.FocusShelf
 import com.stremio.mobile.presentation.tv.focus.TvFocusLocation
 import com.stremio.mobile.presentation.tv.focus.TvFocusMemory
@@ -47,6 +52,8 @@ import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
 import kotlinx.coroutines.flow.first
 
+private data class PendingSpatialTraversal(val shelfKey: String, val anchorX: Float, val direction: Int)
+
 @Composable
 internal fun TvHomeScreen(
     shelves: List<CatalogShelf>, isBoardLoading: Boolean, isActive: Boolean,
@@ -57,10 +64,10 @@ internal fun TvHomeScreen(
     val focusShelves = remember(shelves, shelfKeys) { shelves.mapIndexed { i, shelf ->
         FocusShelf(shelfKeys[i], shelf.items, shelf.isLoading)
     } }
-    val focusable = focusShelves.filter { it.items.isNotEmpty() }
     val verticalState = rememberLazyListState()
     val registry = remember { TvFocusRegistry() }
     val rowStates = remember { mutableStateMapOf<String, LazyListState>() }
+    val rowScrollPositions = remember { mutableMapOf<String, TvRowScrollPosition>() }
     var pendingRestore by remember { mutableStateOf<TvFocusLocation?>(null) }
     var focusedLocation by remember { mutableStateOf<TvFocusLocation?>(null) }
     var detailsReturnTarget by remember { mutableStateOf<TvFocusLocation?>(null) }
@@ -70,7 +77,7 @@ internal fun TvHomeScreen(
     val latestLoading by rememberUpdatedState(isBoardLoading)
     val latestMemory by rememberUpdatedState(focusMemory)
     val density = LocalDensity.current
-    var pendingTraversal by remember { mutableStateOf<TvFocusLocation?>(null) }
+    var pendingTraversal by remember { mutableStateOf<PendingSpatialTraversal?>(null) }
 
     suspend fun restore(location: TvFocusLocation) {
         val targetShelfIndex = latestKeys.indexOf(location.shelfKey)
@@ -139,7 +146,7 @@ internal fun TvHomeScreen(
                     Text(shelf.title, Modifier.padding(start = TvDimens.safeHorizontal, top = TvDimens.shelfTitleTop, bottom = TvDimens.shelfTitleBottom), style = MaterialTheme.typography.titleLarge, color = TvColors.primaryText)
                     when {
                         shelf.items.isNotEmpty() -> TvShelfRow(
-                            shelfKeys[index], shelf.items, isActive, registry, rowStates,
+                            shelfKeys[index], shelf.items, isActive, registry, rowStates, rowScrollPositions,
                             onFocused = { content ->
                                 if (isActive) {
                                     val location = TvFocusLocation(shelfKeys[index], content, index)
@@ -148,14 +155,18 @@ internal fun TvHomeScreen(
                                 }
                             },
                             onVertical = { content, direction ->
-                                val neighbors = focusable
-                                val current = neighbors.indexOfFirst { it.key == shelfKeys[index] }
-                                val next = neighbors.getOrNull(current + direction)
-                                if (next != null && isActive) {
-                                    val remembered = focusMemory.contentForShelf(next.key)
-                                    val item = next.items.firstOrNull { contentFocusKey(it.type, it.id) == remembered } ?: next.items.first()
-                                    val target = TvFocusLocation(next.key, contentFocusKey(item.type, item.id), focusShelves.indexOfFirst { it.key == next.key })
-                                    pendingTraversal = target
+                                if (isActive) {
+                                    val sourceKey = shelfKeys[index]
+                                    val sourceItem = rowStates[sourceKey]?.layoutInfo?.visibleItemsInfo
+                                        ?.firstOrNull { it.key == content }
+                                    val next = adjacentFocusableShelf(focusShelves, sourceKey, direction)
+                                    if (sourceItem != null && next != null) {
+                                        pendingTraversal = PendingSpatialTraversal(
+                                            next.key,
+                                            sourceItem.offset + sourceItem.size / 2f,
+                                            direction,
+                                        )
+                                    }
                                 }
                             },
                             onActivate = { item, content ->
@@ -190,27 +201,31 @@ internal fun TvHomeScreen(
             return@LaunchedEffect
         }
 
-        val visibleTarget = verticalState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == target.shelfKey }
-        if (visibleTarget == null) {
-            val sourceKey = focusedLocation?.shelfKey
-            val referenceHeight = verticalState.layoutInfo.visibleItemsInfo
-                .firstOrNull { it.key == sourceKey }
-                ?.size
-                ?: with(density) { (TvDimens.posterHeight + 48.dp).roundToPx() }
-            val viewportHeight = verticalState.layoutInfo.viewportSize.height
-            val keepPreviousShelfVisible = (viewportHeight - referenceHeight).coerceAtLeast(0)
-            verticalState.animateScrollToItem(targetShelfIndex, scrollOffset = -keepPreviousShelfVisible)
+        val sourceShelfIndex = focusedLocation?.shelfKey?.let(latestKeys::indexOf) ?: targetShelfIndex - target.direction
+        val sourceInfo = verticalState.layoutInfo.visibleItemsInfo
+            .firstOrNull { it.key == latestKeys.getOrNull(sourceShelfIndex) }
+        val shelfStepPx = (sourceInfo?.size ?: with(density) { (TvDimens.posterHeight + 48.dp).roundToPx() }) +
+            with(density) { TvDimens.shelfSpacing.roundToPx() }
+        var steps = 0
+        val maxSteps = (targetShelfIndex - sourceShelfIndex).let { kotlin.math.abs(it) }.coerceAtLeast(1)
+        while (verticalState.layoutInfo.visibleItemsInfo.none { it.key == target.shelfKey } && steps < maxSteps) {
+            verticalState.animateScrollBy((shelfStepPx * target.direction).toFloat())
+            steps++
         }
 
         val row = snapshotFlow { rowStates[target.shelfKey] }.first { it != null }!!
-        val shelf = latestShelves.getOrNull(targetShelfIndex)
-        val itemIndex = shelf?.items?.indexOfFirst { contentFocusKey(it.type, it.id) == target.contentKey } ?: -1
-        if (itemIndex >= 0) {
-            row.scrollToItem(itemIndex)
-            snapshotFlow { row.layoutInfo.visibleItemsInfo.any { it.key == target.contentKey } }.first { it }
-            registry.requester("${target.shelfKey}|${target.contentKey}").requestFocus()
-            focusedLocation = target
-            latestMemory.remember(target.shelfKey, target.contentKey, target.shelfIndex)
+        val visibleItems = snapshotFlow { row.layoutInfo.visibleItemsInfo.toList() }.first { it.isNotEmpty() }
+        val spatialTarget = closestVisibleFocusItem(
+            target.anchorX,
+            visibleItems.mapIndexed { fallbackIndex, info ->
+                VisibleFocusItem(info.key as String, info.offset + info.size / 2f, info.index.takeIf { it >= 0 } ?: fallbackIndex)
+            },
+        )
+        if (spatialTarget != null) {
+            registry.requester("${target.shelfKey}|${spatialTarget.key}").requestFocus()
+            val resolved = TvFocusLocation(target.shelfKey, spatialTarget.key, targetShelfIndex)
+            focusedLocation = resolved
+            latestMemory.remember(resolved.shelfKey, resolved.contentKey, resolved.shelfIndex)
         }
         pendingTraversal = null
     }

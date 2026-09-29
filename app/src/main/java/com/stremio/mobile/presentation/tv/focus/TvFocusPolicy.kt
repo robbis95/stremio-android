@@ -17,6 +17,27 @@ fun shelfFocusKeys(shelves: List<CatalogShelf>): List<String> {
 
 data class FocusShelf(val key: String, val items: List<CatalogItem>, val isLoading: Boolean)
 
+/** Visible row child geometry, with the stable semantic key used to request focus. */
+data class VisibleFocusItem(val key: String, val centerX: Float, val index: Int)
+
+/** Pick the visible item nearest a screen-space X anchor; lower item index breaks exact ties. */
+fun closestVisibleFocusItem(anchorX: Float, items: List<VisibleFocusItem>): VisibleFocusItem? =
+    items.minWithOrNull(compareBy<VisibleFocusItem> { kotlin.math.abs(it.centerX - anchorX) }.thenBy { it.index })
+
+/** Ordinary vertical movement follows shelf order and has no dependency on remembered content. */
+fun adjacentFocusableShelf(shelves: List<FocusShelf>, sourceKey: String, direction: Int): FocusShelf? {
+    if (direction != -1 && direction != 1) return null
+    val sourceIndex = shelves.indexOfFirst { it.key == sourceKey }
+    if (sourceIndex < 0) return null
+    var index = sourceIndex + direction
+    while (index in shelves.indices) {
+        val candidate = shelves[index]
+        if (candidate.items.isNotEmpty()) return candidate
+        index += direction
+    }
+    return null
+}
+
 /** A pinned route return location takes precedence over mutable, latest Home focus memory. */
 fun preferredRestoreLocation(
     routeReturnTarget: TvFocusLocation?, currentMemory: TvFocusLocation?,

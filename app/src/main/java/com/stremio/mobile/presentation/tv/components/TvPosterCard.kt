@@ -68,9 +68,9 @@ internal fun TvPosterCard(
                 }
             }
             .focusable()
-            .shadow(if (isFocused) 14.dp else 2.dp, shape, clip = false)
+            .shadow(if (isFocused) 14.dp else 0.dp, shape, clip = false)
             .background(TvColors.surface, shape)
-            .tvFocusTreatment(isFocused, TvDimens.controlRadius, TvColors.divider)
+            .tvFocusTreatment(isFocused, TvDimens.controlRadius)
             .padding(TvDimens.posterContentPadding),
         verticalArrangement = Arrangement.spacedBy(TvDimens.posterContentSpacing),
     ) {

@@ -8,13 +8,20 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collect
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.presentation.tv.focus.TvFocusRegistry
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
 import com.stremio.mobile.presentation.tv.theme.TvDimens
+
+internal data class TvRowScrollPosition(val index: Int, val scrollOffset: Int)
 
 @Composable
 internal fun TvShelfRow(
@@ -23,15 +30,25 @@ internal fun TvShelfRow(
     active: Boolean,
     registry: TvFocusRegistry,
     rowStates: MutableMap<String, LazyListState>,
+    rowScrollPositions: MutableMap<String, TvRowScrollPosition>,
     onFocused: (String) -> Unit,
     onVertical: (String, Int) -> Unit,
     onActivate: (CatalogItem, String) -> Unit,
 ) {
     val contentKeys = items.map { contentFocusKey(it.type, it.id) }
-    val listState = rememberLazyListState()
+    val savedPosition = rowScrollPositions[shelfKey] ?: TvRowScrollPosition(0, 0)
+    val listState = rememberLazyListState(savedPosition.index, savedPosition.scrollOffset)
     androidx.compose.runtime.SideEffect { rowStates[shelfKey] = listState }
+    LaunchedEffect(shelfKey, listState) {
+        snapshotFlow { TvRowScrollPosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) }
+            .distinctUntilChanged()
+            .collect { rowScrollPositions[shelfKey] = it }
+    }
     androidx.compose.runtime.DisposableEffect(shelfKey, listState) {
-        onDispose { if (rowStates[shelfKey] === listState) rowStates.remove(shelfKey) }
+        onDispose {
+            rowScrollPositions[shelfKey] = TvRowScrollPosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset)
+            if (rowStates[shelfKey] === listState) rowStates.remove(shelfKey)
+        }
     }
     LazyRow(state = listState, contentPadding = PaddingValues(horizontal = TvDimens.safeHorizontal, vertical = TvDimens.shelfRowVerticalPadding),
         horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {

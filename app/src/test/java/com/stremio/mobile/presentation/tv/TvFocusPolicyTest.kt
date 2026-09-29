@@ -3,10 +3,14 @@ package com.stremio.mobile.presentation.tv
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.presentation.tv.focus.FocusShelf
 import com.stremio.mobile.presentation.tv.focus.TvFocusLocation
+import com.stremio.mobile.presentation.tv.focus.VisibleFocusItem
+import com.stremio.mobile.presentation.tv.focus.adjacentFocusableShelf
+import com.stremio.mobile.presentation.tv.focus.closestVisibleFocusItem
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
 import com.stremio.mobile.presentation.tv.focus.preferredRestoreLocation
 import com.stremio.mobile.presentation.tv.focus.resolveFocusLocation
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -63,5 +67,48 @@ class TvFocusPolicyTest {
     @Test fun currentMemoryIsUsedWithoutRouteReturnTarget() {
         val currentMemory = TvFocusLocation("shelf", contentFocusKey("movie", "remembered"), 1)
         assertEquals(currentMemory, preferredRestoreLocation(null, currentMemory))
+    }
+
+    @Test fun spatialTargetChoosesVisibleCardNearestSourceCenterX() {
+        val target = closestVisibleFocusItem(310f, listOf(
+            VisibleFocusItem("movie:a", 120f, 0),
+            VisibleFocusItem("movie:b", 286f, 1),
+            VisibleFocusItem("movie:c", 452f, 2),
+        ))
+        assertEquals("movie:b", target?.key)
+    }
+
+    @Test fun exactSpatialDistanceTieChoosesLowerStableRowIndex() {
+        val target = closestVisibleFocusItem(200f, listOf(
+            VisibleFocusItem("movie:later", 250f, 4),
+            VisibleFocusItem("movie:earlier", 150f, 2),
+        ))
+        assertEquals("movie:earlier", target?.key)
+    }
+
+    @Test fun spatialTargetReturnsNullWhenNoTargetCardsAreVisible() {
+        assertNull(closestVisibleFocusItem(200f, emptyList()))
+    }
+
+    @Test fun ordinarySpatialTargetDoesNotPreferOldRememberedContent() {
+        val remembered = "movie:old"
+        val visible = listOf(VisibleFocusItem("movie:underneath", 300f, 1))
+        assertEquals("movie:underneath", closestVisibleFocusItem(300f, visible)?.key)
+        assertFalse(visible.any { it.key == remembered })
+    }
+
+    @Test fun explicitRouteRestorationStillPrefersItsSemanticTarget() {
+        val routeTarget = TvFocusLocation("shelf", contentFocusKey("movie", "opened"), 0)
+        val currentMemory = TvFocusLocation("shelf", contentFocusKey("movie", "later"), 0)
+        assertEquals(routeTarget, resolveFocusLocation(
+            preferredRestoreLocation(routeTarget, currentMemory), listOf(shelf("shelf", "later", "opened")), emptyMap(),
+        ))
+    }
+
+    @Test fun adjacentShelfSearchSkipsEmptyShelvesDeterministically() {
+        val shelves = listOf(shelf("one", "a"), shelf("loading"), shelf("three", "c"))
+        assertEquals("three", adjacentFocusableShelf(shelves, "one", 1)?.key)
+        assertEquals("one", adjacentFocusableShelf(shelves, "three", -1)?.key)
+        assertNull(adjacentFocusableShelf(shelves, "one", -1))
     }
 }

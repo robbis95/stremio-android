@@ -16,6 +16,8 @@ This document investigates four related features for the Android TV client:
 
 It is an architecture and feasibility audit only. It does not authorize implementation.
 
+The broader production sequencing, research classification, Skip Segments design, and shared Playback Experience guardrails are maintained in `TV_PLAYBACK_EXPERIENCE_ROADMAP.md`.
+
 The design goal is to make normal playback require fewer manual source choices while keeping the ordinary Stremio stream picker available at all times.
 
 No external AI service, proprietary server, or special addon is required for the baseline design.

@@ -26,8 +26,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.draw.alpha
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.stremio.mobile.data.model.CatalogItem
@@ -56,6 +58,7 @@ internal fun TvHomeScreen(
     shelves: List<CatalogShelf>,
     isBoardLoading: Boolean,
     isActive: Boolean,
+    navFocusRequester: FocusRequester,
     restoreFocusRequestId: Int,
     focusMemory: TvFocusMemory,
     onOpenDetails: (CatalogItem) -> Unit,
@@ -109,7 +112,7 @@ internal fun TvHomeScreen(
 
     // Only route activation/restoration drives this. Catalog emissions are observed only while waiting
     // for the one explicit request to become satisfiable; they never restart a completed request.
-    LaunchedEffect(isActive, restoreFocusRequestId) {
+    LaunchedEffect(restoreFocusRequestId) {
         if (!isActive) return@LaunchedEffect
         val requested = preferredRestoreLocation(detailsReturnTarget, focusMemory.location)
         val requestedContentKey = requested?.contentKey
@@ -157,7 +160,7 @@ internal fun TvHomeScreen(
     }
 
     Column(
-        Modifier.fillMaxSize().padding(top = TvDimens.homeTopInset, bottom = TvDimens.homeBottomInset),
+        Modifier.fillMaxSize().alpha(if (isActive) 1f else 0f).padding(top = 2.dp, bottom = TvDimens.homeBottomInset),
         verticalArrangement = Arrangement.Top,
     ) {
         LazyColumn(
@@ -214,6 +217,8 @@ internal fun TvHomeScreen(
                                                         sourceInfo.offset + sourceInfo.size / 2f,
                                                         direction,
                                                     )
+                                                } else if (direction < 0 && next == null) {
+                                                    navFocusRequester.requestFocus()
                                                 }
                                             }
                                         },

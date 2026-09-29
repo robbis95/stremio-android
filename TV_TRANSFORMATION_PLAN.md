@@ -408,18 +408,24 @@ Do not implement Smart Play, Smart Fallback, Episode Continuity or Seamless Epis
 - crash/error handling
 - regression pass
 
-## Candidate top-level TV navigation
+## Phase 4A — TV Search + first real top-level navigation
 
-Validate during Phase 3 against real Stremio behavior:
-- Home
-- Discover
-- Library
-- Search
-- account/settings entry
+Status: implemented on `feat/android-tv`; production verification is bounded to the runtime checks recorded below. The only top-level destinations exposed are Home and Search. Discover, Library, Settings, Addons, and account destinations remain unwired and hidden.
 
-Movies/Series may be Discover filters/types rather than permanent destinations.
+- Search uses the existing addon-aware Core `Field.SEARCH` path through `MainViewModel.search(...)`, `CatalogRepository.search(...)`, and `StremioCore.search(...)`. It does not call addon endpoints from UI code, assume Cinemeta, or create a local index.
+- The TV route shell is a small state machine with Login, Home, Search, and Details. Details stores Home or Search as its explicit origin. Home and Search remain composed while switching between them so their independent lazy-row scroll/focus state survives the app session.
+- MainViewModel exposes read-only `tvSearchQuery`, `tvSearchResults`, and `tvSearchShelves` flows over its existing search state. TV input updates immediately; only queries with at least two non-space Unicode code points dispatch Core work. The existing cancellable 300 ms debounce remains in place.
+- Search renders actual Core result shelves in emitted order with their real titles, loading/error state, and existing TV poster/focus behavior. Search shelf identities are stable and namespaced separately from Home. Search → Details → Back restores the semantic result and row position; Home → Details → Back returns to Home focus memory.
+- The keyboard uses QWERTY letter rows plus Space, Backspace, and Clear. D-pad traversal is explicit; the last action row enters the first available result, and Search nav Down restores the Search route's remembered keyboard/result context.
+- Verified bridge limitation: the Rust Android model contains `LocalSearch`, the runtime has `Field.LocalSearch`, and `ActionLoad.LocalSearch` exists, but Kotlin state serialization for LocalSearch is unimplemented and the runtime protobuf lacks Core `ActionSearch`. End-to-end autocomplete is deferred to the targeted **LocalSearch bridge completion** task. The submodule was not modified.
 
-Addons and Settings may live under a secondary destination.
+Runtime evidence on the existing 960×540 dp Google TV ARM64 emulator (app data preserved): initial Home and Search routes render; Up reaches the compact nav; Center selects Search while retaining nav focus; Down enters Search; on-screen query entry and Clear/Backspace/Space were exercised; real addon-backed result shelves/cards appeared while per-catalog loading continued; one Search result opened Details and Back restored its exact focused card and horizontal position; Home content and Continue Watching remained visible; Search query/results survived a controlled Home → Search route switch in the same session. A 30-second Search idle check showed no spontaneous focus jump, and the filtered logcat window had no matching FocusRelatedWarning, FocusRequester, AndroidRuntime, fatal exception, Compose exception, or ANR entries. The requested five-repeat Search Details return was attempted but not completed reliably: after an initial exact restore, a later rapid loop ended on Home focus, so repeated-cycle restoration remains a verification gate. A too-fast first attempt also activated a keyboard action before result focus settled; neither sequence is counted as a route-origin failure or as five successful repeats.
+
+The 142 dp Home hero and normal poster sizing were preserved. A late catalog emission/focus stability remains a Phase 3B watch item; no controlled late-emission regression was performed specifically for Phase 4A.
+
+### Remaining candidate top-level destinations
+
+Add Discover, Library, Addons, or Settings only alongside working routes and their real state/actions. Movies/Series may be Discover filters rather than permanent destinations. Do not expose placeholders in navigation.
 
 ## Runtime verification gates
 
@@ -440,7 +446,7 @@ Authentication:
 - network failure
 
 Search:
-- D-pad keyboard
+- repeated Search → Details → Back exact-focus loops
 - physical keyboard
 - phone remote text input where supported
 - Back/IME behavior

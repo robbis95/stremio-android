@@ -146,17 +146,16 @@ This is a major optimization opportunity because Home can use already-loaded pre
 
 #### LocalSearch
 
-Official Core 0.59 contains a LocalSearch model and search action designed for local autocomplete.
-
-The Android Field enum includes `LocalSearch`, but the current Kotlin/protobuf bridge does not expose a usable LocalSearch model payload to the app.
+Official Core 0.59 contains a LocalSearch model and search action designed for local autocomplete. The Android Field enum includes `LocalSearch` and ActionLoad has a LocalSearch arm, but the current bridge has no usable LocalSearch payload (`get_state_binary(LocalSearch)` is unimplemented) and the runtime protobuf does not expose Core's ActionSearch query action.
 
 Do not implement a duplicate Android-only Cinemeta index merely to bypass this.
 
-Preferred future work:
-1. extend/update the Kotlin/Core bridge
-2. expose LocalSearch results
-3. use local suggestions while typing
-4. run full addon catalog search only on committed search
+Future targeted work, titled **LocalSearch bridge completion**:
+1. complete the Kotlin/protobuf query-action and result-state bridge
+2. add bridge tests
+3. then consider local suggestions while typing
+
+Until then, TV uses the working addon-aware Core SEARCH model for meaningful queries. Do not add a parallel Android index.
 
 #### Search history
 
@@ -324,6 +323,8 @@ On Search/Enter or an intentional suggestion selection:
 - preserve shelf source/context
 - progressively render real returned results
 
+Phase 4A's TV keyboard updates local query text immediately. Blank input and fewer than two non-space Unicode code points clear/hold an empty state without remote work. Meaningful changes use the existing cancellable 300 ms ViewModel debounce, Core `Field.SEARCH`, addon `CatalogsWithExtra`, and `loadSearchRange`. Render real shelves in emitted order, including their titles, loading/errors, and see-all request identity. The current stage still runs addon search after the threshold while typing; LocalSearch remains a bridge task.
+
 ### Bridge rule
 
 Do not create a second private search engine just because LocalSearch is not currently surfaced by the Kotlin bridge.
@@ -465,11 +466,13 @@ Other types should appear only when real installed addons/Core data expose them.
 
 This makes the UI adapt to the user's Stremio configuration instead of pretending every account has the same content universe.
 
+The first real top-level shell currently contains only Home and Search. Discover, Library, Addons, and Settings remain candidates for later routes; keep them out of the shell until each route is implemented and wired.
+
 ---
 
 ## 11. TV state architecture
 
-The TV root no longer collects the full `MainUiState`. The current implementation exposes read-only TV-facing flows for account state, board shelves, selected details, Continue Watching, account-link state, session restoration, and board loading as needed.
+The TV root no longer collects the full `MainUiState`. The current implementation exposes read-only TV-facing flows for account state, board shelves, selected details, Continue Watching, account-link state, session restoration, board loading, and Search query/results/shelves as needed.
 
 `MainUiState` still exists for the broader/mobile application and combines many unrelated concerns, so future TV routes must continue to avoid falling back to whole-state collection.
 
@@ -487,11 +490,17 @@ Candidate grouped states, only if/when individual flows become unwieldy:
 
 The existing MainViewModel may continue exposing narrow read-only flows until grouping has a concrete benefit.
 
+### Top-level route and focus ownership
+
+The shared navigation currently exposes only Home and Search. `TvRouteState` records a Home/Search origin when Details opens; closing Details returns to that explicit origin. Home and Search stay independently composed during top-level route switches, so their lazy-list and row-scroll state do not share or reset. Home keeps its existing semantic `TvFocusMemory`; Search has a separate result-key namespace, requester registry, row-scroll positions, and last keyboard/result target. The shared top navigation does not write either route's content focus memory. Add a destination only when its route is implemented and wired.
+
+MainViewModel exposes read-only `tvSearchQuery`, `tvSearchResults`, and `tvSearchShelves` views of its existing search flows. The TV screen owns only immediate keyboard text and focus presentation; Core remains the sole addon-search backend.
+
 ### Production Home ownership
 
 `TvApp` supplies the existing board-shelf and Continue Watching flows to a small immutable `TvHomePresentation`; it does not introduce another backend state model. That presentation adds only layout semantics: a non-focusable hero section, an optional stable `tv:continue-watching` shelf, and board shelves that retain original board indices. Its explicit semantic-key-to-LazyColumn-index mapping keeps focus restoration independent of the hero and optional shelf. Continue Watching enrichment is a pure presentation transformation that matches existing board previews by `type + id` and preserves all library progress/playback state.
 
-The hero observes the focused `CatalogItem` preview only. Its visual candidate settles after a 150 ms dwell, with no MetaDetails request on focus movement. Shelf visibility invokes the existing bounded `MainViewModel.onShelfVisible(originalBoardShelfIndex)` policy; focus movement itself does not preload catalogs. The Home hero scrolls as part of the same feed. Discover, Library, Search, and Settings navigation controls wait until their destinations can complete navigation.
+The hero observes the focused `CatalogItem` preview only. Its visual candidate settles after a 150 ms dwell, with no MetaDetails request on focus movement. Shelf visibility invokes the existing bounded `MainViewModel.onShelfVisible(originalBoardShelfIndex)` policy; focus movement itself does not preload catalogs. The Home hero scrolls as part of the same feed. Search now joins Home as a real top-level destination. Discover, Library, and Settings controls remain absent until their destinations can complete navigation.
 
 Do not split the ViewModel merely for aesthetic architecture.
 
@@ -809,11 +818,9 @@ Remaining Phase 3B work:
 - implement and wire real top-level destinations before exposing their navigation controls
 - continue verifying successful asynchronous catalog emissions while focus is active
 
-### Gate 6 — Search bridge and Search UI
+### Gate 6 — Phase 4A TV Search
 
-Before final Search:
-- expose LocalSearch/search-history capabilities where practical
-- avoid full network search per keystroke
+Status: TV Search and the first working Home/Search navigation shell are implemented. The screen uses Core addon SEARCH shelves through the existing ViewModel path, with an immediate TV keyboard, a two-character non-space threshold, and the existing 300 ms cancellable debounce. Search and Home focus/row-scroll memories are route-local; Details returns to its explicit origin. LocalSearch remains deferred to **LocalSearch bridge completion** because state serialization and query-action bridge support are missing. Search history remains a separate bridge capability.
 
 ### Gate 7 — details/episodes/stream intelligence
 

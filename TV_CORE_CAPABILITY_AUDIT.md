@@ -100,17 +100,22 @@ Current behavior:
 - ViewModel debounces 300 ms
 - full Core addon search can run while typing
 
-Core 0.59 capability not properly exposed to Android app:
+Core 0.59 capability not end-to-end exposed to Android app:
 - LocalSearch
 
-The Field enum includes `LocalSearch`, and official Core contains the LocalSearch model/action, but this wrapper does not provide an Android protobuf model for its result state.
+The included Rust `AndroidModel` contains `local_search: LocalSearch`, and the runtime `Field` enum maps `LocalSearch`. `ActionLoad` protobuf also has a `local_search` arm. However, Android cannot currently consume LocalSearch autocomplete end-to-end:
+
+- `AndroidModel.get_state_binary(LocalSearch)` is explicitly `unimplemented!()` in `model/model.rs`
+- the runtime protobuf `Action` oneof has no Core `ActionSearch` query-action arm, so Kotlin cannot dispatch the LocalSearch query action
+- the Kotlin bridge therefore exposes neither a usable LocalSearch result state nor the full query action path
+
+Do not call this a working Android LocalSearch capability merely because the Rust model and Field enum exist.
 
 Official Stremio Web uses LocalSearch for autocomplete.
 
-Recommendation:
-- expose LocalSearch through the bridge before final TV Search
-- use LocalSearch while typing
-- commit full addon search intentionally
+Phase 4A TV Search uses the already working addon-aware `Field.SEARCH` / `CatalogsWithExtra` path and `loadSearchRange`. Its on-screen keyboard updates immediately; TV submits meaningful (at least two non-space Unicode code point) queries through the existing ViewModel's cancellable 300 ms debounce. Blank and one-character input do not dispatch remote addon searches.
+
+Future targeted task: **LocalSearch bridge completion**. Complete the Kotlin/protobuf query-action and state-payload bridge, add bridge tests, then consider local autocomplete. Do not bypass Core with a custom Android search index.
 
 ### Search history
 
@@ -281,7 +286,7 @@ Priority order for TV:
 1. rich preview preservation in Android models — no Core upgrade required
 2. episode progress/overview/upcoming preservation — no Core upgrade required
 3. stream behavior-hint preservation — no Core upgrade required
-4. LocalSearch bridge exposure — bridge work required
+4. LocalSearch bridge completion (query action and state exposure) — bridge work required
 5. search-history bridge exposure — bridge work required
 6. evaluate Core Link model instead of custom QR HTTP — optional cleanup
 7. newer Core models/fixes — controlled Core upgrade required

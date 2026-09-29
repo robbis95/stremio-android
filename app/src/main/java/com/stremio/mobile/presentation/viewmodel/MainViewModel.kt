@@ -84,8 +84,11 @@ class MainViewModel(
     private var authInFlight = false
     private val selectedSection = MutableStateFlow(MainSection.Home)
     private val searchQuery = MutableStateFlow("")
+    val tvSearchQuery: StateFlow<String> = searchQuery.asStateFlow()
     private val searchResults = MutableStateFlow(CatalogShelf(title = "Search", isLoading = false))
+    val tvSearchResults: StateFlow<CatalogShelf> = searchResults.asStateFlow()
     private val searchShelves = MutableStateFlow<List<CatalogShelf>>(emptyList())
+    val tvSearchShelves: StateFlow<List<CatalogShelf>> = searchShelves.asStateFlow()
     private val isSearchOpen = MutableStateFlow(false)
     private val library = MutableStateFlow(CatalogShelf(title = "Library", isLoading = false))
     private val addons = MutableStateFlow(AddonsUiState())
@@ -1731,8 +1734,12 @@ class MainViewModel(
         searchJob = viewModelScope.launch {
             delay(300)
             val collector = launch {
-                catalogRepository.search(trimmed)
-                    .map { board -> board to boardRepository.extractBoardShelves(board).filter { it.items.isNotEmpty() } }
+                    catalogRepository.search(trimmed)
+                    .map { board ->
+                        board to boardRepository.extractBoardShelves(board).filter {
+                            it.items.isNotEmpty() || it.isLoading || it.error != null
+                        }
+                    }
                     .flowOn(Dispatchers.Default)
                     .collect { (board, shelves) ->
                         val toPreload = board.catalogs
@@ -1767,6 +1774,20 @@ class MainViewModel(
                 )
             )
         }
+    }
+
+    /** TV remote search waits for at least two non-space Unicode code points before Core work. */
+    fun searchFromTv(query: String) {
+        val normalized = query.trim()
+        searchQuery.value = query
+        if (normalized.codePointCount(0, normalized.length) >= 2) {
+            search(query)
+            return
+        }
+        searchJob?.cancel()
+        searchJob = null
+        searchResults.value = CatalogShelf(title = "Search", isLoading = false)
+        searchShelves.value = emptyList()
     }
 
     fun openSearch() {
@@ -2063,6 +2084,7 @@ class MainViewModel(
     }
 
     fun logout() {
+        clearSearch()
         viewModelScope.launch { runCatching { authRepository.logout() } }
         authRepository.clearSavedSession()
         account.value = AccountUiState()

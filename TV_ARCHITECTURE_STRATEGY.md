@@ -3,7 +3,7 @@
 Status: active technical strategy  
 Research date: 2026-09-29  
 Canonical branch: `feat/android-tv`  
-Current TV implementation baseline: `f8ae2245080277fa23235b18d0bcb4ccbd7deda2`
+Current TV implementation baseline: `f19d8c267289b32f9f0e3f8054d1d120a1edfc37`
 
 This document turns the TV design direction into implementation rules grounded in the Stremio architecture, the capabilities exposed by the current Android client, the vendored Kotlin/Core bridge, and current Android TV performance guidance.
 
@@ -469,17 +469,15 @@ This makes the UI adapt to the user's Stremio configuration instead of pretendin
 
 ## 11. TV state architecture
 
-The current `TvApp` collects the entire `MainUiState`.
+The TV root no longer collects the full `MainUiState`. The current implementation exposes read-only TV-facing flows for account state, board shelves, selected details, Continue Watching, account-link state, session restoration, and board loading as needed.
 
-`MainUiState` combines unrelated state including server settings, analytics preferences, player options, addon state, search state and Home state.
-
-As TV functionality grows, this can cause broad recomposition and creates unnecessary coupling.
+`MainUiState` still exists for the broader/mobile application and combines many unrelated concerns, so future TV routes must continue to avoid falling back to whole-state collection.
 
 ### Target
 
-Introduce small TV-facing state slices without duplicating Core truth.
+Continue adding narrow TV-facing state slices without duplicating Core truth as new TV routes are implemented.
 
-Candidate states:
+Candidate grouped states, only if/when individual flows become unwieldy:
 
 - `TvAuthUiState`
 - `TvHomeUiState`
@@ -487,7 +485,7 @@ Candidate states:
 - `TvSearchUiState`
 - `TvPlaybackUiState`
 
-These may be exposed from the existing MainViewModel initially.
+The existing MainViewModel may continue exposing narrow read-only flows until grouping has a concrete benefit.
 
 Do not split the ViewModel merely for aesthetic architecture.
 

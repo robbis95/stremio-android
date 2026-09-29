@@ -1,10 +1,25 @@
 name: Android TV Native ARM64 Debug APK
 
 on:
+  push:
+    branches:
+      - feat/android-tv
+    paths:
+      - ".github/scripts/build-stream-server-android-arm64.sh"
+      - ".github/workflows/android-tv-native-arm64.yml"
+      - "app/**"
+      - "build.gradle.kts"
+      - "buildSrc/**"
+      - "settings.gradle.kts"
+      - "stream-server"
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: android-tv-native-arm64
+  cancel-in-progress: true
 
 jobs:
   arm64-native-debug:
@@ -47,6 +62,14 @@ jobs:
           vcpkgDirectory: "${{ github.workspace }}/vcpkg"
           vcpkgJsonGlob: "stream-server/vcpkg.json"
           runVcpkgInstall: false
+
+      - name: Cache Android ARM64 vcpkg dependencies
+        uses: actions/cache@v4
+        with:
+          path: app/build/vcpkg_installed_arm64
+          key: android-vcpkg-arm64-${{ hashFiles('stream-server/vcpkg.json') }}-84bab45
+          restore-keys: |
+            android-vcpkg-arm64-${{ hashFiles('stream-server/vcpkg.json') }}-
 
       - name: Build ARM64 native debug APK and verify packaged libraries
         run: ./gradlew :app:assembleTvArm64Debug --warning-mode all

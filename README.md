@@ -217,7 +217,7 @@ VCPKG_ROOT=/path/to/vcpkg ANDROID_NDK_HOME=/path/to/android-ndk \
   ./gradlew :app:assembleTvArm64Debug
 ```
 
-This command builds only `aarch64-linux-android` at API 24 with release optimization, the `libtorrent` feature, and default features disabled, then stages the generated library under `app/build/generated/`, assembles the ARM64 debug APK, and inspects the APK ZIP for both `lib/arm64-v8a/libstream_server.so` and `lib/arm64-v8a/libc++_shared.so`. It does not write generated libraries into tracked source directories. Use the manual **Android TV Native ARM64 Debug APK** workflow when no compatible local native toolchain is available.
+This command builds only `aarch64-linux-android` at API 24 with release optimization, the `libtorrent` feature, and default features disabled, then stages the generated library under `app/build/generated/`, assembles the ARM64 debug APK, and inspects the APK ZIP for both `lib/arm64-v8a/libstream_server.so` and `lib/arm64-v8a/libc++_shared.so`. It does not write generated libraries into tracked source directories. The narrowly scoped **Android TV Native ARM64 Debug APK** workflow runs on relevant `feat/android-tv` pushes and supports manual dispatch when available on the default branch.
 
 The release workflow remains the production all-ABI build. The MPV module's native rebuild is handled separately through:
 

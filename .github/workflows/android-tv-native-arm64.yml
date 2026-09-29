@@ -62,7 +62,7 @@ jobs:
             android-vcpkg-arm64-${{ hashFiles('stream-server/vcpkg.json') }}-
 
       - name: Build ARM64 native debug APK and verify packaged libraries
-        run: ./gradlew :app:assembleTvArm64Debug --warning-mode all
+        run: bash ./gradlew :app:assembleTvArm64Debug --warning-mode all
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg

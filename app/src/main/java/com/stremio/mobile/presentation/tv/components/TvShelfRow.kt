@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.dp
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.presentation.tv.focus.TvFocusRegistry
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
+import com.stremio.mobile.presentation.tv.theme.TvDimens
 
 @Composable
 internal fun TvShelfRow(
@@ -32,8 +33,8 @@ internal fun TvShelfRow(
     androidx.compose.runtime.DisposableEffect(shelfKey, listState) {
         onDispose { if (rowStates[shelfKey] === listState) rowStates.remove(shelfKey) }
     }
-    LazyRow(state = listState, contentPadding = PaddingValues(horizontal = 64.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(22.dp), modifier = Modifier.fillMaxWidth()) {
+    LazyRow(state = listState, contentPadding = PaddingValues(horizontal = TvDimens.safeHorizontal, vertical = 18.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.fillMaxWidth()) {
         itemsIndexed(items, key = { _, item -> contentFocusKey(item.type, item.id) }) { index, item ->
             val key = contentKeys[index]
             val requester = registry.requester("$shelfKey|$key")

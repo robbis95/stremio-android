@@ -233,18 +233,23 @@ Still required:
 - validate D-pad event routing
 - validate real catalog emissions do not steal focus
 
-### Phase 3 — Real Stremio Home shell
-Goal:
-Turn the navigation proof into a recognizable production Stremio TV Home matching the design direction.
+### Phase 3A — TV visual foundation
+Status: implemented in source; Phase 2 runtime stress verification is still pending.
 
-Planned scope after Phase 2 validation:
+Implemented:
+- TV-specific color, typography, spacing, and focus design system
+- branded TV startup state using the existing Stremio splash mark
+- QR-first account-link presentation with secondary email/password sign-in
+- visual refinement of the existing real-data multi-shelf Home and poster cards
+
+### Phase 3B — Production Home shell
+Next intended step, only after Phase 2 emulator verification:
 - production Home hierarchy
 - Continue Watching
 - real board/catalog shelves
 - top-level TV navigation shell
 - optional real-data hero
 - Stremio branding
-- production spacing/type scale/focus treatment
 
 Do not invent recommendation sources.
 
@@ -387,8 +392,8 @@ Before commit:
 
 ## Current next gate
 
-Before Phase 3 visual transformation, Phase 2 must be:
+Before Phase 3B, Phase 2 must be:
 1. compiled/tested with Java 21
 2. stress-tested on Google TV emulator when available
 
-Until emulator access returns, bounded static work may continue only when it does not depend on unverified navigation behavior.
+Until emulator access returns, do not start Phase 3B or change the unverified navigation behavior.

@@ -2,6 +2,7 @@ package com.stremio.mobile.presentation.tv
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,6 +14,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -24,12 +26,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyListState
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.data.model.CatalogShelf
+import com.stremio.mobile.R
 import com.stremio.mobile.presentation.tv.components.TvShelfRow
 import com.stremio.mobile.presentation.tv.focus.FocusShelf
 import com.stremio.mobile.presentation.tv.focus.TvFocusLocation
@@ -38,6 +41,8 @@ import com.stremio.mobile.presentation.tv.focus.TvFocusRegistry
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
 import com.stremio.mobile.presentation.tv.focus.resolveFocusLocation
 import com.stremio.mobile.presentation.tv.focus.shelfFocusKeys
+import com.stremio.mobile.presentation.tv.theme.TvColors
+import com.stremio.mobile.presentation.tv.theme.TvDimens
 import kotlinx.coroutines.flow.first
 
 @Composable
@@ -102,15 +107,22 @@ internal fun TvHomeScreen(
         registry.retain(valid)
     }
 
-    Column(Modifier.fillMaxSize().padding(top = 38.dp, bottom = 26.dp), verticalArrangement = Arrangement.Center) {
-        Text("Stremio", Modifier.padding(horizontal = 64.dp), style = MaterialTheme.typography.headlineMedium, color = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(10.dp))
-        Text("Home", Modifier.padding(horizontal = 64.dp), style = MaterialTheme.typography.headlineLarge, color = Color.White)
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(state = verticalState, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(Modifier.fillMaxSize().padding(top = 34.dp, bottom = 30.dp), verticalArrangement = Arrangement.Center) {
+        Row(
+            modifier = Modifier.padding(horizontal = TvDimens.safeHorizontal),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Image(painterResource(R.drawable.ic_stremio_splash_logo), "Stremio", Modifier.height(28.dp))
+            Text("Stremio", style = MaterialTheme.typography.titleMedium, color = TvColors.accent)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text("Home", Modifier.padding(horizontal = TvDimens.safeHorizontal), style = MaterialTheme.typography.headlineLarge, color = TvColors.primaryText)
+        Spacer(Modifier.height(TvDimens.titleSpacing))
+        LazyColumn(state = verticalState, modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(TvDimens.shelfSpacing)) {
             itemsIndexed(shelves, key = { index, _ -> shelfKeys[index] }) { index, shelf ->
                 Column {
-                    Text(shelf.title, Modifier.padding(start = 64.dp, top = 8.dp), style = MaterialTheme.typography.titleLarge, color = Color.White)
+                    Text(shelf.title, Modifier.padding(start = TvDimens.safeHorizontal, top = 8.dp, bottom = 2.dp), style = MaterialTheme.typography.titleLarge, color = TvColors.primaryText)
                     when {
                         shelf.items.isNotEmpty() -> TvShelfRow(
                             shelfKeys[index], shelf.items, isActive, registry, rowStates,
@@ -136,14 +148,14 @@ internal fun TvHomeScreen(
                             },
                         )
                         shelf.isLoading || isBoardLoading -> androidx.compose.foundation.layout.Box(
-                            Modifier.fillMaxWidth().height(190.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                        shelf.error != null -> Text(shelf.error, Modifier.padding(horizontal = 64.dp, vertical = 24.dp), color = MaterialTheme.colorScheme.error)
+                            Modifier.fillMaxWidth().height(220.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = TvColors.accent) }
+                        shelf.error != null -> Text(shelf.error, Modifier.padding(horizontal = TvDimens.safeHorizontal, vertical = 24.dp), color = MaterialTheme.colorScheme.error)
                     }
                 }
             }
             if (shelves.isEmpty()) item(key = "empty") {
                 Text(if (isBoardLoading) "Loading catalogs…" else "No catalogs are available yet.",
-                    Modifier.padding(horizontal = 64.dp, vertical = 36.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Modifier.padding(horizontal = TvDimens.safeHorizontal, vertical = 36.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }

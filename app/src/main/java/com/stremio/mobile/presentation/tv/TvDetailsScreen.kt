@@ -1,6 +1,5 @@
 package com.stremio.mobile.presentation.tv
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -34,6 +33,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.stremio.mobile.data.model.MetaDetails
+import com.stremio.mobile.presentation.tv.theme.TvColors
+import com.stremio.mobile.presentation.tv.theme.TvDimens
+import com.stremio.mobile.presentation.tv.theme.tvFocusTreatment
 
 @Composable
 internal fun TvDetailsScreen(
@@ -51,7 +53,7 @@ internal fun TvDetailsScreen(
         ) {
             Box(
                 modifier = Modifier.size(width = 260.dp, height = 390.dp)
-                    .border(1.dp, Color(0xFF454A55), RoundedCornerShape(12.dp)),
+                    .border(1.dp, TvColors.divider, RoundedCornerShape(TvDimens.controlRadius)),
                 contentAlignment = Alignment.Center,
             ) {
                 AsyncImage(
@@ -71,7 +73,7 @@ internal fun TvDetailsScreen(
                 Spacer(Modifier.height(12.dp))
                 val metadata = listOfNotNull(details?.year, details?.runtime, details?.item?.type?.replaceFirstChar { it.uppercase() })
                 if (metadata.isNotEmpty()) {
-                    Text(metadata.joinToString("  •  "), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text(metadata.joinToString("  •  "), style = MaterialTheme.typography.titleMedium, color = TvColors.accent)
                     Spacer(Modifier.height(20.dp))
                 }
                 when {
@@ -92,7 +94,7 @@ internal fun TvDetailsScreen(
                 .focusRequester(backRequester)
                 .focusProperties { up = backRequester }
                 .onFocusChanged { backFocused = it.isFocused }
-                .border(BorderStroke(2.dp, if (backFocused) MaterialTheme.colorScheme.primary else Color.Transparent), RoundedCornerShape(10.dp))
+                .tvFocusTreatment(backFocused, TvDimens.controlRadius)
                 .padding(horizontal = 12.dp, vertical = 5.dp),
         ) {
             Text("Back", style = MaterialTheme.typography.titleMedium)

@@ -1,8 +1,10 @@
 package com.stremio.mobile.presentation.tv.components
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,7 +18,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -29,6 +30,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import coil3.compose.AsyncImage
 import com.stremio.mobile.data.model.CatalogItem
+import com.stremio.mobile.presentation.tv.theme.TvColors
+import com.stremio.mobile.presentation.tv.theme.TvDimens
+import com.stremio.mobile.presentation.tv.theme.tvFocusTreatment
 
 @Composable
 internal fun TvPosterCard(
@@ -44,9 +48,9 @@ internal fun TvPosterCard(
     onDown: () -> Unit,
     onActivate: () -> Unit,
 ) {
-    val shape = RoundedCornerShape(12.dp)
+    val shape = RoundedCornerShape(TvDimens.controlRadius)
     Column(
-        modifier = Modifier.size(width = 170.dp, height = 286.dp)
+        modifier = Modifier.size(width = TvDimens.posterWidth, height = TvDimens.posterHeight)
             .focusRequester(requester)
             .focusProperties {
                 canFocus = enabled
@@ -64,13 +68,15 @@ internal fun TvPosterCard(
                 }
             }
             .focusable()
-            .border(BorderStroke(if (isFocused) 4.dp else 1.dp, if (isFocused) MaterialTheme.colorScheme.primary else Color(0xFF454A55)), shape)
-            .padding(5.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .shadow(if (isFocused) 14.dp else 2.dp, shape, clip = false)
+            .background(TvColors.surface, shape)
+            .tvFocusTreatment(isFocused, TvDimens.controlRadius, TvColors.divider)
+            .padding(7.dp),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
     ) {
         AsyncImage(model = item.poster, contentDescription = item.name, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().height(238.dp).border(1.dp, Color(0xFF30343D), shape))
-        Text(item.name, modifier = Modifier.padding(horizontal = 5.dp), color = Color.White,
+            modifier = Modifier.fillMaxWidth().height(238.dp).clip(shape).border(1.dp, TvColors.divider, shape))
+        Text(item.name, modifier = Modifier.padding(horizontal = 5.dp), color = TvColors.primaryText,
             style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }

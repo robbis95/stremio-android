@@ -4,8 +4,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -14,12 +12,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.stremio.mobile.core.theme.StremioMobileTheme
 import com.stremio.mobile.presentation.viewmodel.MainViewModel
+import com.stremio.mobile.presentation.tv.theme.TvColors
+import com.stremio.mobile.presentation.tv.theme.TvTheme
 
 private enum class TvRoute { Login, Home, Details }
 
@@ -74,11 +71,11 @@ internal fun TvApp(viewModel: MainViewModel) {
         returnToHome()
     }
 
-    StremioMobileTheme {
-        Box(Modifier.fillMaxSize().background(Color(0xFF101216))) {
+    TvTheme {
+        Box(Modifier.fillMaxSize().background(TvColors.background)) {
             when {
-                isRestoring -> CircularProgressIndicator(Modifier.align(Alignment.Center))
-                authenticated && route == TvRoute.Login -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                isRestoring -> TvStartupScreen()
+                authenticated && route == TvRoute.Login -> TvStartupScreen()
                 route == TvRoute.Login || !authenticated -> TvLoginScreen(
                     account = uiState.account,
                     linkState = tvLinkState,

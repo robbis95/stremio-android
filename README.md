@@ -199,30 +199,33 @@ To create the base64 keystore secret from PowerShell:
 
 ## Native Libraries
 
-Prebuilt native outputs are committed for supported ABIs:
+The MPV module's native runtime outputs are vendored for supported ABIs:
 
 - `armeabi-v7a`
 - `arm64-v8a`
 - `x86`
 - `x86_64`
 
-The universal APK contains all supported ABIs. ABI-specific APKs are smaller and should be preferred when the device architecture is known.
-
 The MPV module intentionally excludes `libc++_shared.so` and uses the app-packaged C++ runtime.
 
-Native rebuild helpers:
+The app also tracks the shared C++ runtime used by those outputs. `libstream_server.so` is generated from the pinned `stream-server` submodule; it is not committed. The release workflow builds it for all supported ABIs and injects the artifacts before release APK assembly. The ordinary `android-ci` and `android-nightly` debug APK workflows do not inject the stream-server library, so those APKs cannot run the native Torrent server.
 
-```powershell
-.\gradlew compileNativeLibs
+Fast Kotlin work and normal debug assembly do not rebuild Rust. ARM64 native TV playback has an explicit build and APK verification path. It requires stable Rust with the `aarch64-linux-android` target, `cargo-ndk`, `pkg-config`, CMake, Ninja, an Android NDK, and the release-pinned vcpkg checkout (`84bab45d415d22042bd0b9081aea57f362da3f35`). Set `VCPKG_ROOT` to that checkout; the task installs the pinned stream-server manifest dependencies into an ignored directory under `app/build/` and requires the Android ARM64 OpenSSL headers and libraries to be present. The native task fails early with an actionable prerequisite message when a required tool is missing.
+
+```bash
+VCPKG_ROOT=/path/to/vcpkg ANDROID_NDK_HOME=/path/to/android-ndk \
+  ./gradlew :app:assembleTvArm64Debug
 ```
 
-MPV native rebuilds are handled separately through:
+This command builds only `aarch64-linux-android` at API 24 with release optimization, the `libtorrent` feature, and default features disabled, then stages the generated library under `app/build/generated/`, assembles the ARM64 debug APK, and inspects the APK ZIP for both `lib/arm64-v8a/libstream_server.so` and `lib/arm64-v8a/libc++_shared.so`. It does not write generated libraries into tracked source directories. Use the manual **Android TV Native ARM64 Debug APK** workflow when no compatible local native toolchain is available.
+
+The release workflow remains the production all-ABI build. The MPV module's native rebuild is handled separately through:
 
 ```bash
 third_party/mpv-android-lib/rebuild-native.sh
 ```
 
-The MPV rebuild script is intended for Linux/macOS environments. stream-server native builds can be run per ABI through the Gradle `copyStreamServerJniLibs` helper; Gradle can run those native ABI tasks in parallel when invoked with `--parallel`.
+The MPV rebuild script is intended for Linux/macOS environments. Generated stream-server `.so` files and native build output remain ignored build artifacts.
 
 ## Development Notes
 

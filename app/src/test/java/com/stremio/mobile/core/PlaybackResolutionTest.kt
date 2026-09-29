@@ -30,10 +30,12 @@ class PlaybackResolutionTest {
         assertFalse(mayUseRawStreamFallback(torrent()))
     }
 
-    @Test fun `local server policy classifies Core conversion sources`() {
+    @Test fun `local server policy mirrors Core conversion requirements`() {
         assertTrue(streamRequiresLocalServer(torrent()))
         assertTrue(streamRequiresLocalServer(url("https://source/video", proxy = true)))
+        assertTrue(streamRequiresLocalServer(url("http://source/video", proxy = true)))
         assertTrue(streamRequiresLocalServer(url("ftp://source/video")))
+        assertTrue(streamRequiresLocalServer(url("ftps://source/video")))
         assertTrue(streamRequiresLocalServer(Stream(source = Stream.Source.YouTube(Stream.YouTube("yt")), behaviorHints = hints(), deepLinks = links())))
         assertTrue(streamRequiresLocalServer(Stream(source = Stream.Source.Rar(Stream.Rar()), behaviorHints = hints(), deepLinks = links())))
         assertTrue(streamRequiresLocalServer(Stream(source = Stream.Source.Zip(Stream.Zip()), behaviorHints = hints(), deepLinks = links())))
@@ -43,6 +45,10 @@ class PlaybackResolutionTest {
         assertTrue(streamRequiresLocalServer(Stream(source = Stream.Source.Nzb(Stream.Nzb()), behaviorHints = hints(), deepLinks = links())))
         assertFalse(streamRequiresLocalServer(url("https://source/video")))
         assertFalse(streamRequiresLocalServer(url("http://source/video")))
+        assertFalse(streamRequiresLocalServer(url("rtmp://source/live")))
+        assertFalse(streamRequiresLocalServer(Stream(source = Stream.Source.External(Stream.External()), behaviorHints = hints(), deepLinks = links())))
+        assertFalse(streamRequiresLocalServer(Stream(source = Stream.Source.PlayerFrame(Stream.PlayerFrame("https://frame/source")), behaviorHints = hints(), deepLinks = links())))
+        assertFalse(streamRequiresLocalServer(Stream(source = null, behaviorHints = hints(), deepLinks = links())))
     }
 
     @Test fun `selected matcher requires exact stream and both request identities`() {
@@ -133,6 +139,18 @@ class PlaybackResolutionTest {
         val failure = coreResolutionTimeoutFailure()
         assertEquals(PlaybackResolutionFailure.CoreResolutionTimeout, failure.category)
         assertEquals("CoreResolutionTimeout", failure.message)
+    }
+
+    @Test fun `missing source is invalid and never treated as a local server requirement`() {
+        val missingSource = Stream(source = null, behaviorHints = hints(), deepLinks = links())
+        assertFalse(streamRequiresLocalServer(missingSource))
+        val failure = try {
+            resolvedCoreSource(MatchingPlayerStream.Ready(converted("http://127.0.0.1:11470/stream")), missingSource)
+            null
+        } catch (error: PlaybackResolutionException) {
+            error
+        }
+        assertEquals(PlaybackResolutionFailure.NoPlayableSource, failure?.category)
     }
 
     @Test fun `trace includes categories without endpoint header token or magnet data`() {

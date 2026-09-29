@@ -2208,7 +2208,7 @@ class MainViewModel(
     }
 
     private fun safeServerFailureCategory(state: StreamingServerState): String = when (state) {
-        is StreamingServerState.Failed -> if (state.message.contains("reach", ignoreCase = true)) "Unreachable" else "NativeStartFailed"
+        is StreamingServerState.Failed -> state.category.name
         StreamingServerState.Starting -> "StillStarting"
         StreamingServerState.Stopped -> "DidNotStart"
         is StreamingServerState.Ready -> "UnexpectedReadyState"

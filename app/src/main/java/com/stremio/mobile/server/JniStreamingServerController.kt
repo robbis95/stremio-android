@@ -3,6 +3,8 @@ package com.stremio.mobile.server
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.SystemClock
+import com.stremio.mobile.BuildConfig
 import timber.log.Timber
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -28,6 +30,7 @@ class JniStreamingServerController(
 
         init {
             System.loadLibrary("stream_server")
+            if (BuildConfig.DEBUG) Timber.tag(TAG).i("Native library loaded")
         }
 
         @JvmStatic
@@ -47,13 +50,14 @@ class JniStreamingServerController(
                 if (waitForServerReady(current.baseUrl, timeoutMs = 750)) {
                     return
                 }
-                Timber.tag(TAG).w("State was Ready but %s is not reachable; restarting native server", current.baseUrl)
-                dumpServerLogsToLogcat("ready-state unreachable")
+                Timber.tag(TAG).w("Previous Ready state failed the /settings reachability probe; restarting native server")
+                dumpServerLogSummary("ready-state-unreachable")
                 stopNativeServer()
             }
 
             mutableState.value = StreamingServerState.Starting
             val useForeground = useForegroundService()
+            val startupStartedAtMs = SystemClock.elapsedRealtime()
             val serviceIntent = Intent(context, ServerService::class.java).apply {
                 putExtra(ServerService.EXTRA_FOREGROUND, useForeground)
             }
@@ -67,27 +71,49 @@ class JniStreamingServerController(
 
                     val configDir = File(context.filesDir, "stream-server").absolutePath
                     val cacheDir = File(context.cacheDir, "stream-server").absolutePath
+                    Timber.tag(TAG).i("Invoking native server start")
+                    val nativeStartedAtMs = SystemClock.elapsedRealtime()
                     startServerNative(context.applicationContext, configDir, cacheDir, 11470)
+                        .also {
+                            Timber.tag(TAG).i("Native server start call returned in %d ms", SystemClock.elapsedRealtime() - nativeStartedAtMs)
+                        }
                 }
 
                 if (url != null && waitForServerReady(url)) {
-                    Timber.tag(TAG).i("Streaming server ready at %s", url)
+                    Timber.tag(TAG).i("Streaming server ready; /settings returned 2xx in %d ms", SystemClock.elapsedRealtime() - startupStartedAtMs)
                     mutableState.value = StreamingServerState.Ready(url)
                 } else {
-                    val message = if (url == null) {
-                        "Native start returned null"
+                    val failure = if (url == null) {
+                        StreamingServerState.Failed(
+                            StreamingServerFailureCategory.NativeStartReturnedNull,
+                            "Native server start returned no endpoint.",
+                        )
                     } else {
-                        "Native server returned $url but did not become reachable"
+                        StreamingServerState.Failed(
+                            StreamingServerFailureCategory.SettingsEndpointUnreachable,
+                            "Native server started, but the local /settings endpoint did not respond successfully.",
+                        )
                     }
-                    Timber.tag(TAG).e(message)
-                    dumpServerLogsToLogcat(message)
+                    Timber.tag(TAG).e("Streaming server startup failed: %s after %d ms", failure.category.name, SystemClock.elapsedRealtime() - startupStartedAtMs)
+                    dumpServerLogSummary(failure.category.name)
                     stopNativeServer()
-                    mutableState.value = StreamingServerState.Failed(message)
+                    mutableState.value = failure
                 }
+            } catch (e: LinkageError) {
+                Timber.tag(TAG).e("Native function unavailable during server startup after %d ms", SystemClock.elapsedRealtime() - startupStartedAtMs)
+                dumpServerLogSummary("native-function-unavailable")
+                mutableState.value = StreamingServerState.Failed(
+                    StreamingServerFailureCategory.NativeFunctionUnavailable,
+                    "The stream-server native start function is unavailable.",
+                )
+                stopNativeServer()
             } catch (e: Exception) {
-                Timber.tag(TAG).e(e, "Error starting native server")
-                dumpServerLogsToLogcat("start exception")
-                mutableState.value = StreamingServerState.Failed(e.message ?: "Unknown native error")
+                Timber.tag(TAG).e("Native server startup exception category=%s after %d ms", e.javaClass.simpleName, SystemClock.elapsedRealtime() - startupStartedAtMs)
+                dumpServerLogSummary("native-startup-exception")
+                mutableState.value = StreamingServerState.Failed(
+                    StreamingServerFailureCategory.NativeStartupException,
+                    "Native server startup failed (${e.javaClass.simpleName}).",
+                )
                 stopNativeServer()
             }
         }
@@ -126,44 +152,28 @@ class JniStreamingServerController(
             connection.readTimeout = 500
             connection.setRequestProperty("Accept", "application/json")
             try {
-                connection.responseCode in 200..499
+                    connection.responseCode in 200..299
             } finally {
                 connection.disconnect()
             }
         }.getOrDefault(false)
     }
 
-    private fun dumpServerLogsToLogcat(reason: String) {
+    private fun dumpServerLogSummary(reason: String) {
         val logDir = File(context.filesDir, "stream-server/logs")
-        Timber.tag(TAG).e("Checking server logs after %s: %s", reason, logDir.absolutePath)
         if (!logDir.exists()) {
-            Timber.tag(TAG).e("Server log directory does not exist")
+            Timber.tag(TAG).e("Server log summary: reason=%s files=0", reason)
             return
         }
 
         val candidates = logDir.listFiles()
             ?.filter { it.isFile && (it.name == "server_current.log" || it.extension == "log" || it.extension == "jsonl") }
-            ?.sortedByDescending { it.lastModified() }
-            ?.let { files ->
-                val current = files.firstOrNull { it.name == "server_current.log" }
-                listOfNotNull(current) + files.filter { it != current }.take(1)
-            }
             .orEmpty()
-
-        if (candidates.isEmpty()) {
-            Timber.tag(TAG).e("No server log files found in %s", logDir.absolutePath)
-            return
-        }
-
-        candidates.forEach { file ->
-            Timber.tag(TAG).e("---- %s (%d bytes) ----", file.name, file.length())
-            runCatching {
-                file.readLines().takeLast(120).forEach { line ->
-                    Timber.tag(TAG).e(line.take(3500))
-                }
-            }.onFailure {
-                Timber.tag(TAG).e(it, "Failed to read %s", file.absolutePath)
-            }
-        }
+        Timber.tag(TAG).e(
+            "Server log summary: reason=%s files=%d totalBytes=%d; contents omitted",
+            reason,
+            candidates.size,
+            candidates.sumOf { it.length() },
+        )
     }
 }

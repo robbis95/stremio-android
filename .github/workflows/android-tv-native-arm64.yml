@@ -1,0 +1,64 @@
+name: Android TV Native ARM64 Debug APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  arm64-native-debug:
+    name: Build and verify ARM64 native debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Set up pinned vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "84bab45d415d22042bd0b9081aea57f362da3f35"
+          vcpkgDirectory: "${{ github.workspace }}/vcpkg"
+          vcpkgJsonGlob: "stream-server/vcpkg.json"
+          runVcpkgInstall: false
+
+      - name: Build ARM64 native debug APK and verify packaged libraries
+        run: ./gradlew :app:assembleTvArm64Debug --warning-mode all
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_INSTALLED_DIR_ARM64: ${{ github.workspace }}/app/build/vcpkg_installed_arm64
+
+      - name: Upload ARM64 TV debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: stremio-android-tv-arm64-native-debug
+          path: app/build/outputs/apk/debug/*arm64-v8a*debug.apk
+          if-no-files-found: error
+          retention-days: 14

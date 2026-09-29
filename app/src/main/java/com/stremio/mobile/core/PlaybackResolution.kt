@@ -98,6 +98,9 @@ internal fun resolvedCoreSource(matching: MatchingPlayerStream, requested: Strea
     MatchingPlayerStream.Stale, MatchingPlayerStream.Loading -> null
     MatchingPlayerStream.Error -> throw PlaybackResolutionException(PlaybackResolutionFailure.CoreConversionError)
     is MatchingPlayerStream.Ready -> {
+        if (requested.source == null) {
+            throw PlaybackResolutionException(PlaybackResolutionFailure.NoPlayableSource)
+        }
         val uri = convertedPlayableUri(matching.stream)
             ?: throw PlaybackResolutionException(PlaybackResolutionFailure.NoPlayableSource)
         ResolvedPlayableSource(
@@ -136,14 +139,15 @@ internal fun streamRequiresLocalServer(stream: Stream): Boolean {
         is Stream.Source.Zip7,
         is Stream.Source.Tgz,
         is Stream.Source.Tar,
-        is Stream.Source.Nzb,
-        is Stream.Source.PlayerFrame -> true
+        is Stream.Source.Nzb -> true
+        is Stream.Source.PlayerFrame,
+        is Stream.Source.External -> false
         is Stream.Source.Url -> {
             val url = source.value.url
-            if (stream.behaviorHints.proxyHeaders != null) true
-            else runCatching { URI(url).scheme?.lowercase() }.getOrNull() !in setOf("http", "https")
+            stream.behaviorHints.proxyHeaders != null ||
+                runCatching { URI(url).scheme?.lowercase() }.getOrNull() in setOf("ftp", "ftps")
         }
-        is Stream.Source.External, null -> true
+        null -> false
     }
 }
 

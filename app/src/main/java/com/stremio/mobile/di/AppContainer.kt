@@ -1,6 +1,7 @@
 package com.stremio.mobile.di
 
 import android.content.Context
+import com.stremio.mobile.BuildConfig
 import timber.log.Timber
 import com.stremio.mobile.core.StremioCore
 import com.stremio.mobile.player.PlaybackManager
@@ -35,9 +36,11 @@ class AppContainer(context: Context) {
     val apkInstaller = ApkInstaller(context.applicationContext)
 
     val serverController: StreamingServerController = try {
-        JniStreamingServerController(context, useForegroundService = { authRepository.isServerInForeground() })
+        JniStreamingServerController(context, useForegroundService = { authRepository.isServerInForeground() }).also {
+            if (BuildConfig.DEBUG) Timber.i("Streaming server controller selected: JNI")
+        }
     } catch (e: UnsatisfiedLinkError) {
-        Timber.e(e, "Failed to load stream_server JNI, falling back to Stub")
+        if (BuildConfig.DEBUG) Timber.e("Streaming server JNI library unavailable; selecting stub controller")
         StubStreamingServerController()
     }
 

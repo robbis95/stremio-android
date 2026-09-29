@@ -1,4 +1,6 @@
 import java.util.Properties
+import com.stremio.gradle.PrepareStreamServerArm64
+import com.stremio.gradle.VerifyArm64ApkPackaging
 
 plugins {
     id("com.android.application")
@@ -113,6 +115,8 @@ android {
 
 }
 
+val generatedStreamServerJniLibs = layout.buildDirectory.dir("generated/streamServerJniLibs")
+
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2026.05.01")
     implementation(composeBom)
@@ -158,79 +162,55 @@ dependencies {
     implementation("com.posthog:posthog-android:3.51.0")
     testImplementation("junit:junit:4.13.2")
 }
-data class StreamServerTarget(
-    val taskSuffix: String,
-    val abi: String,
-    val rustTarget: String,
-    val vcpkgTriplet: String,
-    val vcpkgInstallRootName: String,
-    val vcpkgInstalledEnvSuffix: String,
-)
+val streamServerRoot = rootProject.file("stream-server")
+val streamServerArm64Library = streamServerRoot.resolve("target/aarch64-linux-android/release/libstream_server.so")
+val nativeBuildScript = rootProject.file(".github/scripts/build-stream-server-android-arm64.sh")
+val configuredSdkDir = localProperties.getProperty("sdk.dir")?.let { file(it) }
+val configuredNdkHome = stringPropertyOrEnv("ANDROID_NDK_HOME")
+    ?: stringPropertyOrEnv("ANDROID_NDK_ROOT")
+    ?: configuredSdkDir?.resolve("ndk/29.0.13846066")?.absolutePath
+    ?: ""
+val configuredVcpkgRoot = stringPropertyOrEnv("VCPKG_ROOT") ?: ""
+val configuredVcpkgInstallDir = stringPropertyOrEnv("VCPKG_INSTALLED_DIR_ARM64")
+    ?: stringPropertyOrEnv("VCPKG_INSTALLED_DIR")
+    ?: layout.buildDirectory.dir("vcpkg_installed_arm64").get().asFile.absolutePath
 
-val streamServerTargets = listOf(
-    StreamServerTarget("Armv7", "armeabi-v7a", "armv7-linux-androideabi", "arm-android", "arm", "ARMV7"),
-    StreamServerTarget("Arm64", "arm64-v8a", "aarch64-linux-android", "arm64-android", "arm64", "ARM64"),
-    StreamServerTarget("X86", "x86", "i686-linux-android", "x86-android", "x86", "X86"),
-    StreamServerTarget("X86_64", "x86_64", "x86_64-linux-android", "x64-android", "x64", "X86_64"),
-)
-
-val externalStreamServerRoot = projectDir.resolve("../../stream-server").normalize()
-val submoduleStreamServerRoot = rootProject.file("stream-server")
-val streamServerRoot = when {
-    externalStreamServerRoot.resolve("server/Cargo.toml").isFile -> externalStreamServerRoot
-    submoduleStreamServerRoot.resolve("server/Cargo.toml").isFile -> submoduleStreamServerRoot
-    else -> externalStreamServerRoot
+tasks.register<Exec>("buildStreamServerArm64") {
+    group = "native build"
+    description = "Builds the pinned libtorrent stream-server for Android arm64-v8a."
+    commandLine("bash", nativeBuildScript.absolutePath)
+    environment("ANDROID_NDK_HOME", configuredNdkHome)
+    environment("VCPKG_ROOT", configuredVcpkgRoot)
+    environment("VCPKG_INSTALLED_DIR", configuredVcpkgInstallDir)
+    environment("STREAM_SERVER_ROOT", streamServerRoot.absolutePath)
 }
-val vcpkgRoot = stringPropertyOrEnv("VCPKG_ROOT") ?: "C:\\vcpkg"
 
-streamServerTargets.forEach { target ->
-    tasks.register<Exec>("buildStreamServer${target.taskSuffix}") {
-        workingDir = streamServerRoot.resolve("server")
-        val cargoArgs = listOf(
-            "cargo",
-            "ndk",
-            "--target",
-            target.rustTarget,
-            "--platform",
-            "24",
-            "build",
-            "--release",
-            "--features",
-            "libtorrent",
-            "--no-default-features",
-        )
-        if (org.apache.tools.ant.taskdefs.condition.Os.isFamily(org.apache.tools.ant.taskdefs.condition.Os.FAMILY_WINDOWS)) {
-            commandLine("cmd", "/c", cargoArgs.joinToString(" "))
-        } else {
-            commandLine(cargoArgs)
-        }
+val prepareStreamServerArm64 = tasks.register<PrepareStreamServerArm64>("prepareStreamServerArm64") {
+    group = "native build"
+    description = "Builds and stages the Android arm64-v8a stream-server JNI library under app/build."
+    dependsOn("buildStreamServerArm64")
+    nativeLibrary.set(streamServerArm64Library)
+    outputDirectory.set(generatedStreamServerJniLibs)
+}
 
-        val targetVcpkgInstalledDir = stringPropertyOrEnv("VCPKG_INSTALLED_DIR_${target.vcpkgInstalledEnvSuffix}")
-            ?: stringPropertyOrEnv("VCPKG_INSTALLED_DIR")
-            ?: file("$vcpkgRoot/installed-${target.vcpkgInstallRootName}").absolutePath
-        val tripletRoot = file(targetVcpkgInstalledDir).resolve(target.vcpkgTriplet)
-        environment("VCPKG_ROOT", vcpkgRoot)
-        environment("VCPKG_INSTALLED_DIR", targetVcpkgInstalledDir)
-        environment("VCPKGRS_TRIPLET", target.vcpkgTriplet)
-        environment("OPENSSL_DIR", tripletRoot.absolutePath)
-        environment("PKG_CONFIG_ALLOW_CROSS", "1")
-        environment("PKG_CONFIG_PATH", tripletRoot.resolve("lib/pkgconfig").absolutePath)
-        environment("PKG_CONFIG_SYSROOT_DIR", tripletRoot.absolutePath)
+val nativeTvTaskRequested = gradle.startParameter.taskNames.any { task ->
+    task.substringAfterLast(':') in setOf("assembleTvArm64Debug", "verifyArm64StreamServerPackaging")
+} || findProperty("includeStreamServerArm64") == "true"
+if (nativeTvTaskRequested) {
+    androidComponents.onVariants(androidComponents.selector().withName("debug")) { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareStreamServerArm64) { it.outputDirectory }
     }
 }
 
-tasks.register<Copy>("copyStreamServerJniLibs") {
-    dependsOn(streamServerTargets.map { "buildStreamServer${it.taskSuffix}" })
-    streamServerTargets.forEach { target ->
-        from(streamServerRoot.resolve("target/${target.rustTarget}/release/libstream_server.so")) {
-            into(target.abi)
-        }
-    }
-    into("src/main/jniLibs")
+tasks.register<VerifyArm64ApkPackaging>("verifyArm64StreamServerPackaging") {
+    group = "verification"
+    description = "Inspects the arm64 debug APK ZIP for the stream-server and shared C++ runtime."
+    dependsOn("assembleDebug")
+    apkDirectory.set(layout.buildDirectory.dir("outputs/apk/debug"))
 }
 
-// Disabled automatic compilation to speed up builds.
-// Run compileNativeLibs task to compile native libraries.
-// tasks.named("preBuild") {
-//     dependsOn("copyStreamServerJniLibs")
-// }
+tasks.register("assembleTvArm64Debug") {
+    group = "build"
+    description = "Builds, packages, and verifies the native-enabled ARM64 TV debug APK."
+    dependsOn("verifyArm64StreamServerPackaging")
+}

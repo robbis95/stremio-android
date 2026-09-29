@@ -17,7 +17,10 @@ class StubStreamingServerController : StreamingServerController {
 
         mutableState.value = StreamingServerState.Starting
         delay(450)
-        mutableState.value = StreamingServerState.Failed("stream_server JNI library is unavailable")
+        mutableState.value = StreamingServerState.Failed(
+            StreamingServerFailureCategory.StubControllerUnavailable,
+            "Native streaming server is unavailable in this build.",
+        )
     }
 
     override suspend fun stop() {

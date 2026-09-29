@@ -2,6 +2,11 @@
 build/
 /*/build/
 
+# buildSrc contains checked-in Gradle task types; ignore only its generated output.
+!buildSrc/
+buildSrc/.gradle/
+buildSrc/build/
+
 # Gradle files
 .gradle/
 

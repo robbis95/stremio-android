@@ -457,7 +457,32 @@ The ordinary TV playback instrumentation baseline is implemented in the Android 
 
 TV playback calls the existing Core resolve-and-load repository path and maintains a separate TV playback state. It does not enter mobile `playStream` orchestration. Requested and actual engine are represented separately. Stream-history selection and progress reporting are gated on first visual progress, with final progress reported on Back when eligible. Completion is reported without automatic episode advance. `PlaybackManager` continues to release and recreate the player for each load; this remains the baseline for later measurement. Trace formatting is tested to exclude stream URLs.
 
-The compile, assemble, and unit-test tasks passed (124 tests, 0 failures). The debug universal APK was installed with data preserved on the ARM64 Google TV API 36 emulator, and `TvActivity` was foregrounded; the signed-in Home screen was visually confirmed. No Silo S2E7 playback attempt reached the Player in this verification session, so no source-resolution, first-visual, TTFF, buffering, or engine runtime measurements are available yet. ExoPlayer and MPV runtime paths have not been validated by this phase. PE0 measurement remains open until a manual source playback run records those values.
+The compile, assemble, and unit-test tasks passed (125 tests, 0 failures) after the focused runtime defect fix described below. The debug universal APK was installed with data preserved on the ARM64 Google TV API 36 emulator. The signed-in route was Home Continue Watching → Silo Details → Season 2 → S2E7 (“The Dive”) → Choose Source. No library state was changed. The episode showed watched status and no resume position, so resume was not applicable.
+
+#### Phase 6A runtime audit — 2026-09-29 (PE0 remains open)
+
+The current profile engine was ExoPlayer (`EXO`). Direct and Torrent rows were distinguishable in the stream UI; the explicit Choose Source screen did not start playback until a row was activated. The addon result counts had changed naturally from the Phase 5C audit; results were not forced to match the old counts.
+
+| Manually selected run | Requested / actual | Resolution ms | Player load-call ms | Post-resolve to visual ms | TTFF ms | First visual | Result |
+| --- | --- | ---: | ---: | ---: | ---: | --- | --- |
+| Direct, NoTorrent, 1080p (first attempt) | EXO / EXO | 89 | 301 | N/A | N/A | None | Exo source error after HTTP socket timeout; no frame |
+| Direct, NoTorrent, 1080p (same semantic source retried) | EXO / EXO | 23 | 12 | N/A | N/A | None | Cancelled during Preparing with physical Back |
+| Direct, NoTorrent, 1080p (Server 1) | EXO / EXO | 15 | 48 | N/A | N/A | None | Preparing failed; no frame |
+| Direct, NoTorrent, 1080p (CineStream) | EXO / EXO | 15 | 208 | N/A | N/A | None | Exo source error; no frame |
+| Direct, NoTorrent, 1080p (VidPlay) | EXO / EXO | 12 | 12 | N/A | N/A | None | Exo source error; no frame |
+| Torrent, Torrentio, 1080p (608.91 MB, 809 seeds) | EXO / N/A | N/A | N/A | N/A | N/A | None | Failed in `Resolving` before engine load; local-server start/resolution did not complete |
+
+These are separate attempts, not a performance average. No attempt reached `ExoRenderedFirstFrame`, so no TTFF or visual-latency value can be reported and a 30-second playback run was not possible. No repeat-success TTFF sample exists. MPV was not exercised: the profile was configured for ExoPlayer and no safe local-only engine switch was available. There was no engine fallback in the observed attempts.
+
+Direct attempts remained on the manually selected row; there was no automatic fallback. Physical Back from a Direct Preparing attempt returned to the same S2E7 Streams list with that row selected, released the player, and did not reopen playback or produce delayed audio/video during observation. Back from a Torrent error returned to the same S2E7 Streams list; Back again restored Details at Season 2/S2E7 with the episode focused. The player Back path therefore restored the nested route in the observed checks.
+
+The initial natural Direct error exposed an unfocused Error UI: arrow keys were consumed at the Player root, leaving Retry and Back unreachable by D-pad. The root preview handler consumed D-pad events during Error and the action buttons had no explicit focus contract. The minimal fix adds an explicit initial focus target for Starting, Playing, and Error; Error now focuses Retry and allows D-pad traversal to Back. A pure regression test covers these targets. After rebuilding/reinstalling, runtime focus confirmed Retry initially and Back/Retry traversal in both directions. Retry used the same semantic stream and a new attempt ID. Starting focused the player surface. No natural Error focus issue remains observed.
+
+Progress reporting before first visual is forbidden by the TV state gate (`firstVisualObserved`) and covered by existing source/unit behavior, but runtime reporting after a first visual could not be verified because none occurred. Seek reporting, progress cadence, controls/seek/pause operation during successful playback, controls hiding/restoration, and final eligible progress on Back remain unverified at runtime. Cancel-during-Preparing was exercised: Streams returned with the source selected, the player was released, and no later playback or stale route/state mutation was observed. Retry UI was exercised; a Retry that itself reached playback was not.
+
+The trace scan found no `http://`, `https://`, `magnet:`, `token=`, or `auth` strings in `TvPlaybackTrace`. Log review found Exo `PlaybackException`s (HTTP timeout/connection reset) in the Stremio process, but no Stremio fatal exception, app-process ANR, Compose exception, FocusRequester warning, or FocusRelatedWarning. `AndroidRuntime` startup entries were from the separate `uiautomator` process. MPV errors were not applicable. Source review confirms completion reports ended without auto-advance and no TV activation of health watch, next-video lookup, Skip Segments, preloading, or Smart ranking/fallback.
+
+Screenshots are outside Git under `/private/tmp/` with `pe0-` prefixes (Home, Details, Streams, Starting, natural Error, fixed focus, Torrent list/Starting, canceled Streams, and restored Details). PE0 remains open: no real stream reached a genuine first visual, so the visual, successful progress, control, and stable-playback baseline is incomplete. Do not begin PE1 until a Direct or Torrent run reaches the required first-visual signal and Back/progress behavior is verified.
 
 ### PE1 — Core Skip Segments POC
 - expose Core `introOutro` through the existing Android playback state/repository path if not already surfaced

@@ -51,6 +51,8 @@ internal fun TvPlayerScreen(
     var controlsVisible by remember(state.playbackAttemptId) { mutableStateOf(true) }
     var controlsActivity by remember(state.playbackAttemptId) { mutableIntStateOf(0) }
     val controlsRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val retryRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val backRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val rootRequester = remember(state.playbackAttemptId) { FocusRequester() }
 
     LaunchedEffect(state.stage, state.runtime.positionMs, state.runtime.isPlaying, state.isBuffering, controlsVisible, controlsActivity) {
@@ -60,8 +62,15 @@ internal fun TvPlayerScreen(
             controlsVisible = false
         }
     }
-    LaunchedEffect(controlsVisible, state.firstVisualObserved) {
-        if (controlsVisible && state.firstVisualObserved) runCatching { controlsRequester.requestFocus() }
+    LaunchedEffect(state.stage, state.firstVisualObserved, controlsVisible, state.playbackAttemptId) {
+        when (tvPlayerInitialFocusTarget(state.stage, state.firstVisualObserved)) {
+            TvPlayerFocusTarget.PlayerSurface -> runCatching { rootRequester.requestFocus() }
+            TvPlayerFocusTarget.PlayPause -> {
+                if (controlsVisible) runCatching { controlsRequester.requestFocus() }
+                else runCatching { rootRequester.requestFocus() }
+            }
+            TvPlayerFocusTarget.Retry -> runCatching { retryRequester.requestFocus() }
+        }
     }
 
     Box(
@@ -70,6 +79,7 @@ internal fun TvPlayerScreen(
             .focusRequester(rootRequester)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (state.stage == TvPlaybackStage.Error) return@onPreviewKeyEvent false
                 if (controlsVisible && state.firstVisualObserved) {
                     controlsActivity++
                     return@onPreviewKeyEvent false
@@ -133,8 +143,8 @@ internal fun TvPlayerScreen(
                 ) {
                     Text("Couldn’t start this source", color = TvColors.primaryText, style = MaterialTheme.typography.headlineSmall)
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Button(onClick = onRetry) { Text("Retry") }
-                        Button(onClick = onBack) { Text("Back") }
+                        Button(onClick = onRetry, modifier = Modifier.focusRequester(retryRequester)) { Text("Retry") }
+                        Button(onClick = onBack, modifier = Modifier.focusRequester(backRequester)) { Text("Back") }
                     }
                 }
             TvPlaybackStage.Playing, TvPlaybackStage.Ended -> Unit

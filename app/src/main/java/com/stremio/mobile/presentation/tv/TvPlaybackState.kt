@@ -9,6 +9,15 @@ internal fun newTvPlaybackAttemptId(): String = UUID.randomUUID().toString()
 
 internal enum class TvPlaybackStage { Idle, Resolving, Preparing, Playing, Ended, Error }
 
+internal enum class TvPlayerFocusTarget { PlayerSurface, PlayPause, Retry }
+
+internal fun tvPlayerInitialFocusTarget(stage: TvPlaybackStage, firstVisualObserved: Boolean): TvPlayerFocusTarget =
+    when {
+        stage == TvPlaybackStage.Error -> TvPlayerFocusTarget.Retry
+        firstVisualObserved -> TvPlayerFocusTarget.PlayPause
+        else -> TvPlayerFocusTarget.PlayerSurface
+    }
+
 internal data class TvPlaybackAttempt(
     val attemptId: String,
     val target: TvStreamTarget,

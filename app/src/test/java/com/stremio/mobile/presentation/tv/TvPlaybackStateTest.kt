@@ -44,6 +44,12 @@ class TvPlaybackStateTest {
         assertFalse(isCurrentTvAttempt(state, stale.attemptId))
     }
 
+    @Test fun `player initial focus is explicit for starting playing and error states`() {
+        assertEquals(TvPlayerFocusTarget.PlayerSurface, tvPlayerInitialFocusTarget(TvPlaybackStage.Resolving, false))
+        assertEquals(TvPlayerFocusTarget.PlayPause, tvPlayerInitialFocusTarget(TvPlaybackStage.Playing, true))
+        assertEquals(TvPlayerFocusTarget.Retry, tvPlayerInitialFocusTarget(TvPlaybackStage.Error, false))
+    }
+
     @Test fun `timing exposes resolution load and visual deltas in milliseconds`() {
         val timing = TvPlaybackTiming(
             userSourceActivatedNanos = 1_000_000,

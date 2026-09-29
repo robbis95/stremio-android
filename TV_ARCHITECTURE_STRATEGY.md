@@ -885,3 +885,10 @@ Technical decisions in this document were grounded in:
 - current Android Baseline Profile guidance
 
 This document intentionally distinguishes what the current Android bridge can do from what the upstream Core can do.
+
+
+## Playback Experience roadmap
+
+Future playback intelligence, Skip Segments, recovery, next-episode preparation, language intent, and seamless episode work are governed by `TV_PLAYBACK_EXPERIENCE_ROADMAP.md` together with `TV_SMART_PLAYBACK_FEASIBILITY.md`.
+
+Key rule: Stremio Core remains authoritative for Stremio resource/addon semantics. Android-side coordination may normalize and prioritize client-owned playback work, but must not duplicate Core orchestration. Optional segment providers and speculative work must degrade to ordinary playback without blocking it.

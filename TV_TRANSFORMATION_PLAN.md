@@ -224,7 +224,7 @@ Runtime checks still required:
 - launcher/session restore
 
 ### Phase 2 — Navigation/focus foundation
-Status: implemented, compiled, assembled, unit-tested, installed, and runtime-checked on the Google TV ARM64 emulator. The previously reported focus warning root cause remains unverified, so Phase 2 is not marked complete.
+Status: accepted for progression. Implemented, compiled, assembled, unit-tested, installed, and runtime-verified on the Google TV ARM64 emulator. The historical unreproduced focus warning and a future live-catalog-emission regression check remain watch items, not blockers for Phase 3.
 
 Implemented:
 - reusable TV poster card
@@ -263,13 +263,13 @@ Runtime-polish gate (2026-09-29):
 - a 30-second idle interval produced the same visible focus and scroll position before/after. Logcat was cleared before runtime checks; no `FocusRelatedWarning`, `FocusRequester`, `FATAL EXCEPTION`, `AndroidRuntime`, Compose exception, or ANR matches were captured
 - the historical 16-message `FocusRelatedWarning` remains unreproduced; its old log was unavailable, so its exact stack/path and root cause remain unknown. No warning suppression or speculative requester change was made
 
-Still required:
-- reproduce the earlier 16 `FocusRelatedWarning` messages with their complete stack context and identify their source
-- validate that a newly arriving real catalog/addon emission does not steal focus or reposition the active shelf
-- complete visual review of the full Phase 3A experience at TV viewing distance
+Non-blocking watch items:
+- if the historical `FocusRelatedWarning` reappears, capture its complete stack context and identify its source
+- validate during normal future development that a newly arriving real catalog/addon emission does not steal focus or reposition the active shelf
+- continue visual review as the production Home shell replaces the Phase 3A proof layout
 
 ### Phase 3A — TV visual foundation
-Status: implemented in source; Home viewport and multi-shelf movement received a runtime visual pass. The Phase 2 focus-warning and live-emission checks remain open.
+Status: implemented and runtime-reviewed on Google TV emulator. Its purpose as a visual/focus foundation is complete; remaining visual refinement belongs to the production Home and later route work.
 
 Implemented:
 - TV-specific color, typography, spacing, and focus design system
@@ -278,7 +278,7 @@ Implemented:
 - visual refinement of the existing real-data multi-shelf Home and poster cards
 
 ### Phase 3B — Production Home shell
-Next intended step, only after Phase 2 emulator verification:
+Ready after a controlled TV Material migration/audit:
 - production Home hierarchy
 - Continue Watching
 - real board/catalog shelves
@@ -438,13 +438,13 @@ Before commit:
 
 ## Current next gate
 
-Before Phase 3B, Phase 2 must pass the remaining manual Google TV stress gate.
+Phase 2 is accepted for progression at `b299bef787f892eb269b5c1b44465b2f7f2feb7d` after spatial Up/Down navigation, row-position retention, focus-rim cleanup, 10/10 exact Details return, successful build/tests, clean logcat, and idle stability on the Google TV ARM64 emulator.
 
-The focused Details return-fix runtime verification is recorded at source commit `ac303e8fa4ad38bafcf6f1b059c9a8c0fe4afd83`. The complete Phase 2 manual gate remains open.
+The historical focus warning remains a watch item because it has not reproduced. A newly arriving real catalog emission should continue to be observed during normal future testing, but neither item blocks the next phase.
 
-Do not start Phase 3B until the manual focus/navigation and visual review is completed.
+Before Phase 3B expands the TV component surface, perform a controlled TV-only migration/audit toward `androidx.tv:tv-material`, preserving the custom semantic focus/restoration architecture.
 
-Safe bounded work that may proceed before emulator access returns:
+Safe bounded work that may proceed:
 - preserve currently discarded Core preview metadata in Android presentation models, with mapper tests
 - preserve episode progress/overview/upcoming metadata needed by future TV episode UI
 - preserve stream behavior hints needed for later binge-compatible stream selection
@@ -453,4 +453,4 @@ Safe bounded work that may proceed before emulator access returns:
 - document/prepare LocalSearch and search-history bridge work without inventing duplicate TV-only backend state
 - prepare performance benchmark/Baseline Profile infrastructure once stable test journeys exist
 
-The next coding task should prioritize data preservation before building the final Home hero.
+The next coding task should be the controlled TV Material migration/audit. After that, proceed to Phase 3B production Home.

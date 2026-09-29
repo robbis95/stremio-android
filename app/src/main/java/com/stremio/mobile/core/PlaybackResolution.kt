@@ -3,6 +3,10 @@ package com.stremio.mobile.core
 import com.stremio.core.models.LoadableConvertedStream
 import com.stremio.core.models.Player
 import com.stremio.core.types.resource.Stream
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.map
 import java.net.URI
 
 /** Safe categories used across Core resolution and playback startup. */
@@ -109,6 +113,18 @@ internal fun resolvedCoreSource(matching: MatchingPlayerStream, requested: Strea
 
 internal fun coreResolutionTimeoutFailure() =
     PlaybackResolutionException(PlaybackResolutionFailure.CoreResolutionTimeout)
+
+/** Observe changes before dispatch, then read current state to cover synchronous Core updates. */
+internal fun <T> raceSafeDispatchObservations(
+    subscribe: (onChange: () -> Unit) -> AutoCloseable,
+    dispatch: () -> Unit,
+    readCurrent: () -> T,
+): Flow<T> = callbackFlow {
+    val subscription = subscribe { trySend(Unit) }
+    dispatch()
+    trySend(Unit)
+    awaitClose { subscription.close() }
+}.map { readCurrent() }
 
 /** Identify Core conversions that need the local server before Player.Load is dispatched. */
 internal fun streamRequiresLocalServer(stream: Stream): Boolean {

@@ -17,6 +17,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 class PlaybackResolutionTest {
     private val request = ResourceRequest("addon", ResourcePath("stream", "series", "video-7"))
@@ -75,6 +77,24 @@ class PlaybackResolutionTest {
         assertNull(resolvedCoreSource(matchingPlayerStream(prior, expected), expected.stream))
         val loading = Player(selected = expected, stream = LoadableConvertedStream(LoadableConvertedStream.Content.Loading(com.stremio.core.models.common.Loading())))
         assertEquals(MatchingPlayerStream.Loading, matchingPlayerStream(loading, expected))
+    }
+
+    @Test fun `synchronous dispatch update is observed after subscription`() = runBlocking {
+        var subscribed = false
+        var current = "previous-ready"
+        val observed = raceSafeDispatchObservations(
+            subscribe = { onChange ->
+                subscribed = true
+                AutoCloseable { }
+            },
+            dispatch = {
+                assertTrue("listener must be registered before dispatch", subscribed)
+                current = "requested-converted-ready"
+            },
+            readCurrent = { current },
+        ).first()
+
+        assertEquals("requested-converted-ready", observed)
     }
 
     @Test fun `converted Ready uses Core streaming endpoint and marks conversion`() {

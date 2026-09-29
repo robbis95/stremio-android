@@ -449,22 +449,20 @@ class StremioCore(context: Context) {
             metaRequest = option.metaRequest,
             subtitlesPath = null,
         )
-        return callbackFlow {
-            // Register before dispatch. Player conversion may update synchronously inside dispatch.
-            val cb = Core.EventListener { event ->
-                val inner = event.event
-                if (inner is RuntimeEvent.Event.NewState && inner.value.fields.contains(Field.PLAYER)) {
-                    trySend(Unit)
+        return raceSafeDispatchObservations(
+            subscribe = { onChange ->
+                val cb = Core.EventListener { event ->
+                    val inner = event.event
+                    if (inner is RuntimeEvent.Event.NewState && inner.value.fields.contains(Field.PLAYER)) {
+                        onChange()
+                    }
                 }
-            }
-            Core.addEventListener(cb)
-            dispatchLoad(ActionLoad.Args.Player(selected), Field.PLAYER)
-            // Inspect after dispatch as well as subscribing first, so a synchronous state update
-            // cannot be missed when Core emits no later asynchronous event.
-            trySend(Unit)
-            awaitClose { Core.removeEventListener(cb) }
-        }.transform {
-            val player = getPlayer()
+                Core.addEventListener(cb)
+                AutoCloseable { Core.removeEventListener(cb) }
+            },
+            dispatch = { dispatchLoad(ActionLoad.Args.Player(selected), Field.PLAYER) },
+            readCurrent = { getPlayer() },
+        ).transform { player ->
             val diagnostics = playerSelectionMatchDiagnostics(player, selected)
             if (BuildConfig.DEBUG && !diagnostics.matches) {
                 Timber.tag("PlaybackResolution").d(

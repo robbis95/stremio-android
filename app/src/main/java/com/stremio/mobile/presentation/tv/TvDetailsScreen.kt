@@ -14,28 +14,23 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.stremio.mobile.data.model.MetaDetails
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
-import com.stremio.mobile.presentation.tv.theme.tvFocusTreatment
 
 @Composable
 internal fun TvDetailsScreen(
@@ -43,7 +38,6 @@ internal fun TvDetailsScreen(
     onBack: () -> Unit,
 ) {
     val backRequester = remember { FocusRequester() }
-    var backFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { backRequester.requestFocus() }
 
     Box(Modifier.fillMaxSize().background(TvColors.background).padding(horizontal = 64.dp, vertical = 38.dp)) {
@@ -88,14 +82,11 @@ internal fun TvDetailsScreen(
                 }
             }
         }
-        TextButton(
+        OutlinedButton(
             onClick = onBack,
             modifier = Modifier.align(Alignment.BottomStart)
                 .focusRequester(backRequester)
-                .focusProperties { up = backRequester }
-                .onFocusChanged { backFocused = it.isFocused }
-                .tvFocusTreatment(backFocused, TvDimens.controlRadius)
-                .padding(horizontal = 12.dp, vertical = 5.dp),
+                .focusProperties { up = backRequester },
         ) {
             Text("Back", style = MaterialTheme.typography.titleMedium)
         }

@@ -501,34 +501,26 @@ Use stable immutable state and selective collection.
 
 ## 12. Compose for TV strategy
 
-Current TV presentation uses regular `androidx.compose.material3`.
-
-Current Android guidance recommends TV-optimized Material components via:
+The TV subtree now uses TV-optimized Material components from:
 
 `androidx.tv:tv-material`
 
-The TV library provides remote/focus-oriented components.
+Version `1.1.0` is the current stable release and is adopted by the app module. `TvTheme` supplies the existing Stremio palette and typography through `androidx.tv.material3.MaterialTheme`; it does not use TV Material defaults as the product palette. Android's mobile UI continues to use the existing `androidx.compose.material3` dependency and behavior.
 
 ### Migration rule
 
-Evaluate migration before the TV component surface becomes large.
+Use TV Material `Text`, `Button`, `OutlinedButton`, and the non-interactive `Surface` where they are a good semantic match. Do not use mobile `MaterialTheme` in TV routes, and do not globally replace imports in the shared app module.
 
-Because mobile and TV presentation are already separate, prefer:
-
-- mobile: existing Compose Material 3
-- TV: TV Material where an appropriate TV component exists
-
-Do not blindly mix mobile `MaterialTheme` and TV `MaterialTheme` in the same TV subtree.
+The QR login's optional email/password fallback remains a localized compatibility exception using mobile `OutlinedTextField`, because TV Material has no equivalent text-field surface. Its colors and typography are explicitly set from the TV palette; its FocusRequester, focus properties, and IME actions remain in place. The small non-interactive loading indicators remain mobile Material3 `CircularProgressIndicator`s. These exceptions do not wrap the TV subtree in mobile MaterialTheme.
 
 ### Migration sequence
 
-1. build a small compatibility audit
-2. identify current TV Material replacements for buttons/cards/surfaces
-3. migrate shared TV theme primitives first
-4. migrate TV controls incrementally
-5. verify D-pad/focus runtime after each behavioral component migration
+1. keep the mobile/TV dependency boundary explicit
+2. use TV Material controls for remote actions, with its focus interaction and no duplicate custom focus decoration
+3. keep the QR card non-interactive and use TV Material's non-interactive Surface
+4. verify D-pad/focus runtime after behavioral component migrations
 
-Do not rewrite already-correct custom lazy focus restoration just because TV Material is introduced.
+The custom semantic Home shelf architecture remains authoritative: `TvFocusRegistry`, explicit Left/Right routing, spatial X-preserving Up/Down traversal, semantic route return, and independent row-scroll memory are unchanged. `TvPosterCard` intentionally remains a custom focusable layout rather than TV Material `Card`, preserving its verified one-purple-outline, subtle-scale, focused-elevation contract and transparent/no-shadow unfocused state. Do not rewrite this focus restoration architecture merely because TV Material is present.
 
 ---
 

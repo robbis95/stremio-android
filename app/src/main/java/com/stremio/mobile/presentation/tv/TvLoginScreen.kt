@@ -17,13 +17,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.Button
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +31,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
@@ -45,8 +41,16 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.border
+import androidx.tv.material3.Border
+import androidx.tv.material3.Button
+import androidx.tv.material3.ButtonDefaults
+import androidx.tv.material3.Glow
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.OutlinedButton
+import androidx.tv.material3.OutlinedButtonDefaults
+import androidx.tv.material3.Surface
+import androidx.tv.material3.SurfaceDefaults
+import androidx.tv.material3.Text
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.EncodeHintType
 import com.google.zxing.MultiFormatWriter
@@ -55,7 +59,6 @@ import com.stremio.mobile.presentation.state.AccountUiState
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
 import com.stremio.mobile.presentation.tv.theme.TvTheme
-import com.stremio.mobile.presentation.tv.theme.tvFocusTreatment
 import com.stremio.mobile.presentation.viewmodel.TvAccountLinkUiState
 
 @Composable
@@ -71,6 +74,21 @@ internal fun TvLoginScreen(
     val emailFocus = remember { FocusRequester() }
     val passwordFocus = remember { FocusRequester() }
     val loginFocus = remember { FocusRequester() }
+    val emailFieldColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = TvColors.primaryText,
+        unfocusedTextColor = TvColors.primaryText,
+        disabledTextColor = TvColors.disabled,
+        focusedContainerColor = TvColors.surface,
+        unfocusedContainerColor = TvColors.surface,
+        disabledContainerColor = TvColors.surface,
+        focusedBorderColor = TvColors.focus,
+        unfocusedBorderColor = TvColors.divider,
+        disabledBorderColor = TvColors.divider,
+        focusedLabelColor = TvColors.accent,
+        unfocusedLabelColor = TvColors.secondaryText,
+        disabledLabelColor = TvColors.disabled,
+        cursorColor = TvColors.accent,
+    )
 
     Row(
         modifier = Modifier.fillMaxSize().padding(horizontal = TvDimens.safeHorizontal, vertical = TvDimens.safeVertical),
@@ -91,9 +109,15 @@ internal fun TvLoginScreen(
         Surface(
             modifier = Modifier.weight(1f),
             shape = RoundedCornerShape(TvDimens.cardRadius),
-            color = TvColors.surface,
-            shadowElevation = 8.dp,
-            border = BorderStroke(1.dp, TvColors.divider),
+            colors = SurfaceDefaults.colors(
+                containerColor = TvColors.surface,
+                contentColor = TvColors.primaryText,
+            ),
+            border = Border(
+                border = BorderStroke(1.dp, TvColors.divider),
+                shape = RoundedCornerShape(TvDimens.cardRadius),
+            ),
+            glow = Glow(elevationColor = TvColors.divider.copy(alpha = 0.45f), elevation = 8.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(34.dp),
@@ -141,15 +165,13 @@ internal fun TvLoginScreen(
                             onClick = onRequestNewLink,
                             enabled = !linkState.isLoading && !linkState.isConnecting,
                             modifier = Modifier.height(TvDimens.buttonHeight),
-                            shape = RoundedCornerShape(TvDimens.controlRadius),
+                            shape = ButtonDefaults.shape(shape = RoundedCornerShape(TvDimens.controlRadius)),
                         ) {
                             Text(if (linkState.link == null) "Create link" else "Request a new link")
                         }
-                        var emailToggleFocused by remember { mutableStateOf(false) }
-                        TextButton(
+                        OutlinedButton(
                             onClick = { showEmailLogin = !showEmailLogin },
-                            modifier = Modifier.onFocusChanged { emailToggleFocused = it.isFocused }
-                                .tvFocusTreatment(emailToggleFocused, TvDimens.controlRadius),
+                            shape = OutlinedButtonDefaults.shape(shape = RoundedCornerShape(TvDimens.controlRadius)),
                         ) {
                             Text(if (showEmailLogin) "Hide email sign-in" else "Sign in with email")
                         }
@@ -161,7 +183,9 @@ internal fun TvLoginScreen(
                             modifier = Modifier.fillMaxWidth().focusRequester(emailFocus).focusProperties {
                                 up = emailFocus; down = passwordFocus
                             },
-                            label = { Text("Email or username") }, singleLine = true, enabled = !account.isLoading,
+                            textStyle = MaterialTheme.typography.bodyLarge,
+                            colors = emailFieldColors,
+                            label = { Text("Email or username", style = MaterialTheme.typography.bodyMedium) }, singleLine = true, enabled = !account.isLoading,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
                             keyboardActions = KeyboardActions(onNext = { passwordFocus.requestFocus() }),
                             shape = RoundedCornerShape(TvDimens.controlRadius),
@@ -172,19 +196,21 @@ internal fun TvLoginScreen(
                             modifier = Modifier.fillMaxWidth().focusRequester(passwordFocus).focusProperties {
                                 up = emailFocus; down = loginFocus
                             },
-                            label = { Text("Password") }, singleLine = true, enabled = !account.isLoading,
+                            textStyle = MaterialTheme.typography.bodyLarge,
+                            colors = emailFieldColors,
+                            label = { Text("Password", style = MaterialTheme.typography.bodyMedium) }, singleLine = true, enabled = !account.isLoading,
                             visualTransformation = PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
                             keyboardActions = KeyboardActions(onDone = { if (!account.isLoading) onLogin(email.trim(), password) }),
                             shape = RoundedCornerShape(TvDimens.controlRadius),
                         )
                         Spacer(Modifier.height(8.dp))
-                        var loginFocused by remember { mutableStateOf(false) }
-                        TextButton(
+                        Button(
                             onClick = { if (!account.isLoading) onLogin(email.trim(), password) },
                             modifier = Modifier.focusRequester(loginFocus).focusProperties { up = passwordFocus; down = loginFocus }
-                                .onFocusChanged { loginFocused = it.isFocused }
-                                .tvFocusTreatment(loginFocused, TvDimens.controlRadius),
+                                .height(TvDimens.buttonHeight),
+                            enabled = !account.isLoading,
+                            shape = ButtonDefaults.shape(shape = RoundedCornerShape(TvDimens.controlRadius)),
                         ) {
                             if (account.isLoading) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
                             else Text("Sign in", style = MaterialTheme.typography.titleMedium)

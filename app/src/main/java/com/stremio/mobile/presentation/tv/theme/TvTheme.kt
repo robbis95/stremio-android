@@ -1,11 +1,11 @@
 package com.stremio.mobile.presentation.tv.theme
 
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Typography
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Typography
+import androidx.tv.material3.lightColorScheme
 
 private val TvColorScheme = lightColorScheme(
     primary = TvColors.accent,
@@ -16,7 +16,8 @@ private val TvColorScheme = lightColorScheme(
     surface = TvColors.surface,
     onSurface = TvColors.primaryText,
     onSurfaceVariant = TvColors.secondaryText,
-    outline = TvColors.divider,
+    border = TvColors.divider,
+    borderVariant = TvColors.divider,
     error = TvColors.error,
 )
 

@@ -223,7 +223,7 @@ Runtime checks still required:
 - launcher/session restore
 
 ### Phase 2 — Navigation/focus foundation
-Status: implemented in source on the canonical branch; build/runtime verification still pending because the last implementation environment lacked Java 21.
+Status: implemented, compiled, assembled, unit-tested, installed and smoke-launched on the Google TV ARM64 emulator. Manual navigation stress verification is still pending.
 
 Implemented:
 - reusable TV poster card
@@ -236,11 +236,22 @@ Implemented:
 - deterministic Details return to shelf + item
 - pure Kotlin focus/fallback tests
 
+Verified:
+- Java 21 build works
+- `compileDebugKotlin` passes
+- `assembleDebug` passes
+- `testDebugUnitTest` passes (19 tests, 0 failures)
+- fresh universal APK installs successfully on Google TV ARM64 emulator
+- `TvActivity` launches and remains resumed
+- basic D-pad smoke input does not crash
+- no fatal/ANR/Compose/FocusRequester crash markers observed in smoke logcat
+
 Still required:
-- compile/test with JDK 21
-- emulator stress test
-- validate D-pad event routing
+- manual emulator stress test of D-pad behavior
+- exact per-shelf focus-memory verification
+- repeated Home → Details → Back restoration
 - validate real catalog emissions do not steal focus
+- visual review of Phase 3A at TV viewing distance
 
 ### Phase 3A — TV visual foundation
 Status: implemented in source; Phase 2 runtime stress verification is still pending.
@@ -401,11 +412,11 @@ Before commit:
 
 ## Current next gate
 
-Before Phase 3B, Phase 2 must be:
-1. compiled/tested with Java 21
-2. stress-tested on Google TV emulator when available
+Before Phase 3B, Phase 2 must pass the remaining manual Google TV stress gate.
 
-Until emulator access returns, do not start Phase 3B or change the unverified navigation behavior.
+Build/runtime smoke verification is complete as of commit `5d8b246f468456052a19095648bb236ea596d39e`.
+
+Do not start Phase 3B until the manual focus/navigation and visual review is completed.
 
 Safe bounded work that may proceed before emulator access returns:
 - preserve currently discarded Core preview metadata in Android presentation models, with mapper tests

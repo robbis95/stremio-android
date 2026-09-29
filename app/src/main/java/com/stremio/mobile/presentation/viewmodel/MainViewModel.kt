@@ -36,6 +36,16 @@ import com.stremio.mobile.presentation.tv.toTvDiscoverUiState
 import com.stremio.mobile.presentation.tv.toTvDiscoverFilterGroups
 import com.stremio.mobile.presentation.tv.TvDetailsUiState
 import com.stremio.mobile.presentation.tv.TvEpisodeBrowserUiState
+import com.stremio.mobile.presentation.tv.TvStreamTarget
+import com.stremio.mobile.presentation.tv.TvStreamSelectionUiState
+import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
+import com.stremio.mobile.presentation.tv.tvStreamTargetMatches
+import com.stremio.mobile.presentation.tv.mapTvStreamEmission
+import com.stremio.mobile.presentation.tv.stableInteractionOptions
+import com.stremio.mobile.presentation.tv.keepSelectionIfPresent
+import com.stremio.mobile.presentation.tv.selectProviderLocally
+import com.stremio.mobile.presentation.tv.sourceKindCount
+import com.stremio.mobile.data.model.StreamSourceKind
 import com.stremio.mobile.presentation.tv.detailsWhileLoading
 import com.stremio.mobile.presentation.tv.isDetailsItemInLibrary
 import com.stremio.mobile.server.StreamingServerController
@@ -118,6 +128,11 @@ class MainViewModel(
     val tvSelectedDetails: StateFlow<MetaDetails?> = selectedDetails.asStateFlow()
     private val _tvDetailsUiState = MutableStateFlow(TvDetailsUiState())
     internal val tvDetailsUiState: StateFlow<TvDetailsUiState> = _tvDetailsUiState.asStateFlow()
+    private val _tvStreamSelection = MutableStateFlow(TvStreamSelectionUiState())
+    internal val tvStreamSelection: StateFlow<TvStreamSelectionUiState> = _tvStreamSelection.asStateFlow()
+    private var tvStreamsJob: Job? = null
+    private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
+    private val auditedTvStreamTargets = mutableSetOf<String>()
     private var detailsLibraryOverride: Boolean? = null
     private var detailsLibraryActionJob: Job? = null
     private var isDetailsLibraryActionLoading = false
@@ -1926,6 +1941,109 @@ class MainViewModel(
                 publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = error.message ?: "MetaDetails request failed"))
             }
         }
+    }
+
+    /** TV-only source discovery. It deliberately avoids mobile openStreams/remembered autoplay. */
+    internal fun openTvStreams(target: TvStreamTarget) {
+        tvStreamsJob?.cancel()
+        val previous = _tvStreamSelection.value.takeIf { it.target?.semanticTargetKey == target.semanticTargetKey }
+        _tvStreamSelection.value = TvStreamSelectionUiState(
+            target = target,
+            selectedProvider = previous?.selectedProvider,
+            selectedStreamKey = previous?.selectedStreamKey,
+            isLoading = true,
+            isActive = true,
+        )
+        tvStreamsJob = viewModelScope.launch {
+            try {
+                catalogRepository.getMetaDetailsFlow(
+                    type = target.contentType,
+                    id = target.contentId,
+                    videoId = target.videoId,
+                    guessStreamPath = target.guessStreamPath,
+                ).collect { details ->
+                    if (_tvStreamSelection.value.target?.semanticTargetKey != target.semanticTargetKey) return@collect
+                    if (!tvStreamTargetMatches(details, target)) return@collect
+                    val incoming = mapTvStreamEmission(details)
+                    if (BuildConfig.DEBUG) {
+                        val readyOrder = tvStreamReadyOrder.getOrPut(target.semanticTargetKey) { linkedSetOf() }
+                        incoming.providers.filter { it.status == TvProviderLoadStatus.Ready }.forEach { readyOrder += it.title }
+                        val finalEmission = incoming.providers.isNotEmpty() && !incoming.isLoading
+                        if (finalEmission && auditedTvStreamTargets.add(target.semanticTargetKey)) {
+                            val auditOptions = incoming.options
+                            val outcomes = incoming.providers.joinToString(",") {
+                                "${it.title}:${it.status.name.lowercase()}:${it.readyStreamCount}"
+                            }
+                            Timber.tag("TvStreamAudit").d(
+                                "targetType=%s episode=%s providerRequests=%d providers=%s arrivalOrder=%s streams=%d sourceKinds=direct:%d,torrent:%d,external:%d,youtube:%d,archive:%d,other:%d bingeGroup=%d filename=%d videoHash=%d videoSize=%d notWebReady=%d parsedQuality=%d seeds=%d size=%d duplicateSemanticKeys=%d",
+                                target.contentType,
+                                target.episodeLabel ?: "none",
+                                incoming.providers.size,
+                                outcomes,
+                                tvStreamReadyOrder[target.semanticTargetKey].orEmpty().joinToString(","),
+                                auditOptions.size,
+                                sourceKindCount(auditOptions, StreamSourceKind.Direct),
+                                sourceKindCount(auditOptions, StreamSourceKind.Torrent),
+                                sourceKindCount(auditOptions, StreamSourceKind.External),
+                                sourceKindCount(auditOptions, StreamSourceKind.YouTube),
+                                sourceKindCount(auditOptions, StreamSourceKind.Archive),
+                                sourceKindCount(auditOptions, StreamSourceKind.Other),
+                                auditOptions.count { !it.bingeGroup.isNullOrBlank() },
+                                auditOptions.count { !it.filename.isNullOrBlank() },
+                                auditOptions.count { !it.videoHash.isNullOrBlank() },
+                                auditOptions.count { it.videoSize != null },
+                                auditOptions.count { it.notWebReady },
+                                auditOptions.count { !it.quality.isNullOrBlank() },
+                                auditOptions.count { !it.seeds.isNullOrBlank() },
+                                auditOptions.count { !it.size.isNullOrBlank() },
+                                incoming.duplicateSemanticKeyCount,
+                            )
+                        }
+                    }
+                    val current = _tvStreamSelection.value
+                    val sameTarget = current.target?.semanticTargetKey == target.semanticTargetKey
+                    val options = if (sameTarget) stableInteractionOptions(current.options, incoming.options) else incoming.options
+                    val selectedProvider = selectProviderLocally(incoming.providers, current.selectedProvider)
+                    _tvStreamSelection.value = current.copy(
+                        options = options,
+                        providers = incoming.providers,
+                        selectedProvider = selectedProvider,
+                        selectedStreamKey = keepSelectionIfPresent(current.selectedStreamKey, options),
+                        isLoading = incoming.isLoading,
+                        requestError = null,
+                    )
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (_tvStreamSelection.value.target?.semanticTargetKey == target.semanticTargetKey) {
+                    _tvStreamSelection.value = _tvStreamSelection.value.copy(
+                        isLoading = false,
+                        requestError = error.message?.take(180) ?: "Sources could not be loaded.",
+                    )
+                }
+            }
+        }
+    }
+
+    internal fun selectTvProvider(providerIdentity: String?) {
+        val state = _tvStreamSelection.value
+        _tvStreamSelection.value = state.copy(
+            selectedProvider = selectProviderLocally(state.providers, providerIdentity),
+        )
+    }
+
+    internal fun selectTvStream(semanticKey: String) {
+        val state = _tvStreamSelection.value
+        if (state.options.any { it.semanticKey == semanticKey }) {
+            _tvStreamSelection.value = state.copy(selectedStreamKey = semanticKey)
+        }
+    }
+
+    internal fun closeTvStreams() {
+        tvStreamsJob?.cancel()
+        tvStreamsJob = null
+        _tvStreamSelection.value = _tvStreamSelection.value.copy(isActive = false)
     }
 
     fun closeDetails() {

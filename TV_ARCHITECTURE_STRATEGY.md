@@ -872,9 +872,21 @@ Silo runtime audit results: `tt14688458`, 35 videos, `[0, 1, 2, 3, 4]`, missing-
 
 `:app:compileDebugKotlin`, `:app:assembleDebug`, and `:app:testDebugUnitTest` pass (95 tests). The debug APK was installed with `adb install -r`; app data was preserved. Screenshots are outside Git under `/private/tmp/` using the `stremio-phase5b-` prefix.
 
-### Gate 7C — stream selection
+### Gate 7C — Phase 5C TV source discovery and selection
 
-Phase 5C is next: add a TV-native stream selector that the user opens from a focused episode. Reuse the existing Core stream-loading/resolution path, carry `videoId` and progress context across route return, and keep season/focus navigation free of network calls. Do not add playback, Smart Play, Smart Fallback, Skip Segments, or next-episode preparation.
+Status: implemented and runtime-reviewed on `feat/android-tv` from `29733faf578782b48f5f7ca9d9981bd741363ef4`.
+
+Streams is a nested Details surface, keeping the original top-level origin and Details/episode composition alive. The TV target uses exact Core episode `videoId` plus `guessStreamPath=false`, or null `videoId` plus `guessStreamPath=true` for non-episodic metadata. TV state is a narrow immutable mapping over incremental `LoadableStreams`. The ViewModel cancels the previous target and rejects any emission whose `MetaDetails.selected` does not match the current request semantically.
+
+Per-provider Loading/Ready/Error state is retained, errors are isolated, and already-ready options render before all providers complete. A local provider filter never requests streams. Stable stream identities use request/source evidence and stream metadata rather than the flattened mobile index. Existing options update in place, disappearances are removed, and late arrivals append in Core order, preserving a focused semantic source where possible. Core behavior hints and source kinds survive mapping. Center selects only; it does not resolve or play.
+
+Silo S2E7 returned 71 provider results from 3 requests (Local Files error/0, NoTorrent ready/19, Torrentio ready/52), with Torrentio arriving first. Five duplicate semantic keys were collapsed, leaving 66 displayed options. Displayed source-kind counts were Direct 12, Torrent 52, External 2, YouTube 0, Archive 0, Other 0. Hint/metadata coverage: bingeGroup 52, filename 52, videoHash 0, videoSize 0, notWebReady 0, quality 54, seeds 52, size 52. Runtime verified provider filtering, selection separate from focus, deep list movement, idle stability, S2E7 focus restoration on Back, and same-target re-entry. A different-episode late-result race was not naturally observed. Non-episodic action is implemented and covered by pure tests, but no movie stream audit was captured due to a safety-review rejection of an emulator action that could have toggled Library membership. The stale episode error-state check used S0E4 and correctly retained its target on return. The S4E1 Upcoming row remained inert.
+
+Source review and runtime logs found no resolve/play/player/history transition from selection. There were no observed app fatals, Compose exceptions, focus warnings, or app-process ANRs in the reviewed log interval. Raw URLs and raw filenames are excluded from audit logs and committed documentation.
+
+### Gate 7D — Phase 6A ordinary TV playback
+
+Next, wire explicit activation of the selected source into the existing Core resolve-and-load path and TV Player surface. Preserve the ordinary manual source choice as the only selection policy. Add playback-boundary instrumentation (selection, resolution, prepare, first frame) and validate existing ExoPlayer and MPV capabilities. Keep ranking/Smart Play, fallback, Skip Segments, continuity, next-episode preparation, and preload out of this first playback milestone.
 
 ### Gate 8 — performance instrumentation
 

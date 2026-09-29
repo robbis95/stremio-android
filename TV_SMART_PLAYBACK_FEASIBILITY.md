@@ -1,5 +1,15 @@
 # Smart Playback & Seamless Episodes — Feasibility Audit
 
+## Phase 5C empirical stream audit (2026-09-29)
+
+The TV source-selection runtime audit exercised Silo S2E7 through the pinned Core `MetaDetails` stream path. Three provider requests were observed: Local Files (without catalog support) errored with 0 streams, NoTorrent was ready with 19, and Torrentio was ready with 52 (71 results total). Torrentio results arrived before NoTorrent results. Five duplicate semantic keys were collapsed in the TV interaction snapshot, leaving 66 unique displayed options.
+
+Aggregate source kinds: Direct 12, Torrent 52, External 2, YouTube 0, Archive 0, Other 0. Core hint/field coverage: `bingeGroup` 52, filename 52, `videoHash` 0, `videoSize` 0, `notWebReady` 0. The display-only conservative resolution parser recognized quality for 54 options. Seeds were available on 52 and size on 52. These observations support source-kind-aware parsing and confirm that torrent name/hint metadata is substantially richer than the direct/external sample from this episode; this is one real episode and should not be generalized into an addon-wide distribution. No raw URLs, signed URLs, or raw filenames are retained here.
+
+The planned non-episodic runtime audit was not captured. The non-episodic target path is covered by pure tests and uses `videoId=null`, `guessStreamPath=true`; provider counts, source-kind distribution, and metadata coverage for a movie remain unknown. A naturally timed stale A→B stream race was also not observed, so stale rejection evidence is from semantic-target unit tests plus the actual S0E4 error and S2E7 success target audits.
+
+Phase 5C only selects a source. Runtime and call-path review observed no URL resolution, Player load, playback start, or playback-history mutation.
+
 Status: planning / feasibility only  
 Audit date: 2026-09-29  
 Canonical branch: `feat/android-tv`  

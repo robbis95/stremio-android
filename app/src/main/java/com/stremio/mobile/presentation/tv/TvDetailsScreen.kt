@@ -35,24 +35,33 @@ import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.stremio.mobile.data.model.MetaDetails
+import com.stremio.mobile.data.model.EpisodeOption
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
 
 @Composable
 internal fun TvDetailsScreen(
     state: TvDetailsUiState,
+    episodeFocusRestoreVideoId: String?,
+    episodeFocusRestoreId: Int,
     onLibraryAction: () -> Unit,
+    onChooseSource: () -> Unit,
+    onEpisodeActivate: (EpisodeOption) -> Unit,
     onBack: () -> Unit,
 ) {
     val details = state.details
     val item = details?.item
+    val hasSourceAction = item != null && details?.isLoading == false && state.episodeBrowser == null
     val mode = item?.let(::classifyDetailsArtwork) ?: TvDetailsArtworkMode.TextOnly
     val libraryRequester = remember { FocusRequester() }
+    val sourceRequester = remember { FocusRequester() }
     val backRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
 
     LaunchedEffect(Unit) {
-        runCatching { libraryRequester.requestFocus() }
+        runCatching {
+            if (hasSourceAction) sourceRequester.requestFocus() else libraryRequester.requestFocus()
+        }
             .onFailure { runCatching { backRequester.requestFocus() } }
     }
 
@@ -110,9 +119,12 @@ internal fun TvDetailsScreen(
                 item = item,
                 state = state,
                 browser = state.episodeBrowser,
+                focusRestoreVideoId = episodeFocusRestoreVideoId,
+                focusRestoreId = episodeFocusRestoreId,
                 libraryRequester = libraryRequester,
                 backRequester = backRequester,
                 onLibraryAction = onLibraryAction,
+                onEpisodeActivate = onEpisodeActivate,
                 onBack = onBack,
             )
         } else Column(
@@ -158,18 +170,25 @@ internal fun TvDetailsScreen(
 
             Spacer(Modifier.height(22.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (hasSourceAction) {
+                    Button(
+                        onClick = onChooseSource,
+                        modifier = Modifier.focusRequester(sourceRequester)
+                            .focusProperties { left = backRequester; right = libraryRequester; up = sourceRequester; down = sourceRequester },
+                    ) { Text("Choose Source") }
+                }
                 Button(
                     onClick = onLibraryAction,
                     enabled = !state.isLibraryActionLoading,
                     modifier = Modifier.focusRequester(libraryRequester)
-                        .focusProperties { left = backRequester; up = libraryRequester; down = libraryRequester },
+                        .focusProperties { left = sourceRequester; right = backRequester; up = libraryRequester; down = libraryRequester },
                 ) {
                     Text(if (state.isInLibrary) "✓  In Library" else "+  Add to Library")
                 }
                 OutlinedButton(
                     onClick = onBack,
                     modifier = Modifier.focusRequester(backRequester)
-                        .focusProperties { right = libraryRequester; up = backRequester; down = backRequester },
+                        .focusProperties { left = libraryRequester; right = sourceRequester; up = backRequester; down = backRequester },
                 ) {
                     Text("Back")
                 }

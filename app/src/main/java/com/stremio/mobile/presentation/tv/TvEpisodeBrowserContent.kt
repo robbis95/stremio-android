@@ -62,9 +62,12 @@ internal fun TvEpisodeBrowserContent(
     item: CatalogItem,
     state: TvDetailsUiState,
     browser: TvEpisodeBrowserUiState,
+    focusRestoreVideoId: String?,
+    focusRestoreId: Int,
     libraryRequester: FocusRequester,
     backRequester: FocusRequester,
     onLibraryAction: () -> Unit,
+    onEpisodeActivate: (EpisodeOption) -> Unit,
     onBack: () -> Unit,
 ) {
     val initialSeason = browser.defaultSeason ?: browser.seasons.first().season
@@ -81,6 +84,7 @@ internal fun TvEpisodeBrowserContent(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var pendingEpisodeFocus by remember(item.id) { mutableStateOf(false) }
+    var pendingSemanticRestore by remember(item.id) { mutableStateOf<String?>(null) }
     val season = browser.seasons.firstOrNull { it.season == selectedSeason }
     val visibleEpisodes = season?.episodes.orEmpty()
     val focusEpisodeAt: (Int) -> Unit = { index ->
@@ -104,11 +108,27 @@ internal fun TvEpisodeBrowserContent(
         }
     }
 
-    LaunchedEffect(selectedSeason, visibleEpisodes.map { it.videoId }, pendingEpisodeFocus, focusRegion) {
+    LaunchedEffect(focusRestoreId) {
+        val videoId = focusRestoreVideoId ?: return@LaunchedEffect
+        val target = browser.episodes.firstOrNull { it.videoId == videoId } ?: return@LaunchedEffect
+        val season = target.seriesInfo?.season ?: return@LaunchedEffect
+        selectedSeason = season
+        val targetEpisodes = browser.episodesFor(season)
+        val index = targetEpisodes.indexOfFirst { it.videoId == videoId }
+        if (index >= 0) {
+            rememberedVideoBySeason[season] = videoId
+            rememberedIndexBySeason[season] = index
+            pendingSemanticRestore = videoId
+            focusRegion = EpisodeFocusRegion.Episodes
+        }
+    }
+
+    LaunchedEffect(selectedSeason, visibleEpisodes.map { it.videoId }, pendingEpisodeFocus, focusRegion, pendingSemanticRestore) {
         val offset = scrollBySeason[selectedSeason]
         if (offset != null) listState.scrollToItem(offset.first, offset.second)
         if ((pendingEpisodeFocus || focusRegion == EpisodeFocusRegion.Episodes) && visibleEpisodes.isNotEmpty()) {
-            val rememberedId = rememberedVideoBySeason[selectedSeason]
+            val rememberedId = pendingSemanticRestore
+                ?: rememberedVideoBySeason[selectedSeason]
                 ?: browser.currentVideoId?.takeIf { id -> visibleEpisodes.any { it.videoId == id } }
                 ?: browser.continueWatchingVideoId?.takeIf { id -> visibleEpisodes.any { it.videoId == id } }
             val targetIndex = restoredEpisodeIndex(
@@ -120,11 +140,13 @@ internal fun TvEpisodeBrowserContent(
             rememberedVideoBySeason[selectedSeason] = target.videoId
             rememberedIndexBySeason[selectedSeason] = targetIndex
             fallbackIndex = targetIndex
-            listState.scrollToItem(targetIndex)
+            val targetIsVisible = listState.layoutInfo.visibleItemsInfo.any { it.key == target.videoId }
+            if (offset == null || !targetIsVisible) listState.scrollToItem(targetIndex)
             yield()
             episodeRequesters.getOrPut(target.videoId) { FocusRequester() }.requestFocus()
             focusRegion = EpisodeFocusRegion.Episodes
             pendingEpisodeFocus = false
+            pendingSemanticRestore = null
         } else if (offset == null) {
             val entryId = browser.currentVideoId?.takeIf { id -> visibleEpisodes.any { it.videoId == id } }
                 ?: browser.continueWatchingVideoId?.takeIf { id -> visibleEpisodes.any { it.videoId == id } }
@@ -297,7 +319,11 @@ internal fun TvEpisodeBrowserContent(
                                 Key.DirectionDown -> if (index < visibleEpisodes.lastIndex) {
                                     focusEpisodeAt(index + 1); true
                                 } else true
-                                else -> false // Phase 5B rows browse only; activation is intentionally inert.
+                                Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                    if (!episode.upcoming) onEpisodeActivate(episode)
+                                    true
+                                }
+                                else -> false
                             }
                         },
                 )
@@ -355,7 +381,7 @@ private fun TvEpisodeRow(
             if (!episode.thumbnail.isNullOrBlank()) {
                 AsyncImage(episode.thumbnail, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             } else {
-                Text("▶", color = TvColors.disabled, style = MaterialTheme.typography.titleLarge)
+                Text("EP", color = TvColors.disabled, style = MaterialTheme.typography.labelLarge)
             }
         }
         Column(Modifier.weight(1f).padding(start = 12.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {

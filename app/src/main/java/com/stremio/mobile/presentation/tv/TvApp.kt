@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -32,6 +33,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     val boardShelves by viewModel.tvBoardShelves.collectAsStateWithLifecycle()
     val continueWatching by viewModel.tvContinueWatching.collectAsStateWithLifecycle()
     val detailsUiState by viewModel.tvDetailsUiState.collectAsStateWithLifecycle()
+    val streamUiState by viewModel.tvStreamSelection.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
@@ -46,7 +48,10 @@ internal fun TvApp(viewModel: MainViewModel) {
     var searchFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var discoverFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
     var libraryFocusRequestId by rememberSaveable { mutableIntStateOf(0) }
+    var episodeFocusRestoreId by rememberSaveable { mutableIntStateOf(0) }
+    var episodeFocusRestoreVideoId by rememberSaveable { mutableStateOf<String?>(null) }
     var detailsRequested by remember { mutableStateOf(false) }
+    val streamFocusMemory = remember { mutableStateMapOf<String, TvStreamFocusMemory>() }
     val focusMemory = rememberTvFocusMemory()
     val discoverFocusMemory = rememberTvDiscoverFocusMemory()
     val libraryFocusMemory = rememberTvLibraryFocusMemory()
@@ -105,6 +110,14 @@ internal fun TvApp(viewModel: MainViewModel) {
         Unit
     }
 
+    val returnFromStreams = {
+        episodeFocusRestoreVideoId = streamUiState.target?.videoId
+        if (episodeFocusRestoreVideoId != null) episodeFocusRestoreId++
+        viewModel.closeTvStreams()
+        routeName = TvRouteState(TvRoute.Streams, detailsOrigin).closeStreams().route.name
+        Unit
+    }
+
     BackHandler(enabled = route == TvRoute.Search) {
         routeName = TvRoute.Home.name
         restoreFocusRequestId++
@@ -116,6 +129,9 @@ internal fun TvApp(viewModel: MainViewModel) {
     BackHandler(enabled = route == TvRoute.Library) {
         routeName = TvRoute.Home.name
         restoreFocusRequestId++
+    }
+    BackHandler(enabled = route == TvRoute.Streams) {
+        returnFromStreams()
     }
     BackHandler(enabled = route == TvRoute.Details) { returnFromDetails() }
 
@@ -139,7 +155,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                                     TvRoute.Discover -> TvTopLevelRoute.Discover
                                     TvRoute.Library -> TvTopLevelRoute.Library
                                     TvRoute.Search -> TvTopLevelRoute.Search
-                                    TvRoute.Login, TvRoute.Details -> error("Top navigation is hidden for $route")
+                                    TvRoute.Login, TvRoute.Details, TvRoute.Streams -> error("Top navigation is hidden for $route")
                                 },
                                 onSelect = { destination ->
                                     if (destination == TvTopLevelRoute.Discover) discoverFocusRequestId = 0
@@ -227,11 +243,35 @@ internal fun TvApp(viewModel: MainViewModel) {
                             )
                         }
                     }
-                    if (route == TvRoute.Details) {
+                    if (route == TvRoute.Details || route == TvRoute.Streams) {
                         TvDetailsScreen(
                             state = detailsUiState,
+                            episodeFocusRestoreVideoId = episodeFocusRestoreVideoId,
+                            episodeFocusRestoreId = episodeFocusRestoreId,
                             onLibraryAction = viewModel::toggleTvDetailsLibrary,
+                            onChooseSource = {
+                                val item = detailsUiState.details?.item ?: return@TvDetailsScreen
+                                val target = TvStreamTarget.nonEpisodic(item)
+                                viewModel.openTvStreams(target)
+                                routeName = TvRouteState(TvRoute.Details, detailsOrigin).openStreams().route.name
+                            },
+                            onEpisodeActivate = { episode ->
+                                val item = detailsUiState.details?.item ?: return@TvDetailsScreen
+                                val target = TvStreamTarget.episode(item, episode) ?: return@TvDetailsScreen
+                                viewModel.openTvStreams(target)
+                                routeName = TvRouteState(TvRoute.Details, detailsOrigin).openStreams().route.name
+                            },
                             onBack = returnFromDetails,
+                        )
+                    }
+                    if (route == TvRoute.Streams) {
+                        TvStreamsScreen(
+                            state = streamUiState,
+                            focusMemory = streamFocusMemory,
+                            onBack = returnFromStreams,
+                            onSelectProvider = viewModel::selectTvProvider,
+                            onSelectStream = viewModel::selectTvStream,
+                            onFocusChanged = { targetKey, memory -> streamFocusMemory[targetKey] = memory },
                         )
                     }
                 }

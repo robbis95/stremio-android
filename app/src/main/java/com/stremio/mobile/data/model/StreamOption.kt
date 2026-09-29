@@ -18,4 +18,9 @@ data class StreamOption(
     val filename: String? = null,
     val videoSize: Long? = null,
     val videoHash: String? = null,
+    /** Stable within the source's semantic identity; unlike [key], this never includes a flat index. */
+    val semanticKey: String = key,
+    val sourceKind: StreamSourceKind = StreamSourceKind.Other,
 )
+
+enum class StreamSourceKind { Direct, Torrent, External, YouTube, Archive, Other }

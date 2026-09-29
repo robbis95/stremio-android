@@ -3,7 +3,7 @@ package com.stremio.mobile.presentation.tv
 import com.stremio.mobile.data.model.CatalogShelf
 import com.stremio.mobile.presentation.tv.focus.shelfFocusKeys
 
-internal enum class TvRoute { Login, Home, Discover, Library, Search, Details }
+internal enum class TvRoute { Login, Home, Discover, Library, Search, Details, Streams }
 
 internal enum class TvTopLevelRoute { Home, Discover, Library, Search }
 
@@ -20,7 +20,7 @@ internal fun TvRouteState.openDetails(): TvRouteState {
         TvRoute.Discover -> TvTopLevelRoute.Discover
         TvRoute.Library -> TvTopLevelRoute.Library
         TvRoute.Search -> TvTopLevelRoute.Search
-        TvRoute.Details -> checkNotNull(detailsOrigin) { "Details route is missing its explicit origin" }
+        TvRoute.Details, TvRoute.Streams -> checkNotNull(detailsOrigin) { "Details route is missing its explicit origin" }
         TvRoute.Login -> error("Details can only be opened from a top-level content route")
     }
     return TvRouteState(TvRoute.Details, origin)
@@ -34,6 +34,16 @@ internal fun TvRouteState.closeDetails(): TvRouteState = TvRouteState(
         TvTopLevelRoute.Search -> TvRoute.Search
     },
 )
+
+internal fun TvRouteState.openStreams(): TvRouteState {
+    require(route == TvRoute.Details) { "Streams are nested under Details" }
+    return copy(route = TvRoute.Streams)
+}
+
+internal fun TvRouteState.closeStreams(): TvRouteState {
+    require(route == TvRoute.Streams) { "Only Streams can return to Details" }
+    return copy(route = TvRoute.Details)
+}
 
 internal fun TvRouteState.select(destination: TvTopLevelRoute): TvRouteState = TvRouteState(
     route = when (destination) {

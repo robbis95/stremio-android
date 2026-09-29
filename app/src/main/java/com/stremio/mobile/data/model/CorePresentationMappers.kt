@@ -209,10 +209,10 @@ private fun pbandk.wkt.Timestamp?.toFormattedReleaseDate(): String? {
 fun CoreStream.toStreamOption(index: Int): StreamOption {
     val rawDescription = stream.description?.takeIf { it.isNotBlank() } ?: stream.thumbnail
     val parsed = parseStreamDescription(rawDescription)
-    val quality = stream.name?.let { name ->
-        listOf("2160p", "4k", "1080p", "720p", "480p")
-            .firstOrNull { name.contains(it, ignoreCase = true) }
-    }
+    val quality = listOfNotNull(stream.name, stream.behaviorHints.filename, rawDescription)
+        .asSequence()
+        .mapNotNull(::explicitDisplayQuality)
+        .firstOrNull()
     return StreamOption(
         key = "$index-$addonTitle-${stream.name ?: ""}-${rawDescription ?: ""}",
         name = stream.name?.takeIf { it.isNotBlank() } ?: addonTitle,
@@ -229,7 +229,63 @@ fun CoreStream.toStreamOption(index: Int): StreamOption {
         filename = stream.behaviorHints.filename,
         videoSize = stream.behaviorHints.videoSize,
         videoHash = stream.behaviorHints.videoHash,
+        semanticKey = semanticStreamKey(this),
+        sourceKind = stream.source.toPresentationSourceKind(),
     )
+}
+
+private fun explicitDisplayQuality(value: String): String? {
+    val match = Regex("(?<![A-Za-z0-9])(?:2160p|4k|1080p|720p|480p)(?![A-Za-z0-9])", RegexOption.IGNORE_CASE)
+        .find(value)?.value ?: return null
+    return if (match.equals("4k", ignoreCase = true)) "4K" else match.lowercase()
+}
+
+/** Stable source identity. URLs are reduced to host/path evidence and only the digest is retained. */
+internal fun semanticStreamKey(source: CoreStream): String {
+    val stream = source.stream
+    val hints = stream.behaviorHints
+    val sourceEvidence = when (val variant = stream.source) {
+        is com.stremio.core.types.resource.Stream.Source.Tramvai -> "torrent:${variant.value.infoHash}:${variant.value.fileIdx}"
+        is com.stremio.core.types.resource.Stream.Source.Url -> {
+            val endpoint = runCatching { java.net.URI(variant.value.url) }.getOrNull()
+            "url:${endpoint?.host.orEmpty()}:${endpoint?.path.orEmpty()}"
+        }
+        is com.stremio.core.types.resource.Stream.Source.YouTube -> "youtube:${variant.value.ytId}"
+        is com.stremio.core.types.resource.Stream.Source.External -> "external:${variant.value.externalUrl}:${variant.value.androidTvUrl}"
+        is com.stremio.core.types.resource.Stream.Source.PlayerFrame -> "player-frame:${variant.value.playerFrameUrl}"
+        is com.stremio.core.types.resource.Stream.Source.Rar -> "rar:${variant.value.rarUrls.joinToString()}"
+        is com.stremio.core.types.resource.Stream.Source.Zip -> "zip:${variant.value.zipUrls.joinToString()}"
+        is com.stremio.core.types.resource.Stream.Source.Zip7 -> "zip7:${variant.value.zip7Urls.joinToString()}"
+        is com.stremio.core.types.resource.Stream.Source.Tgz -> "tgz:${variant.value.tgzUrls.joinToString()}"
+        is com.stremio.core.types.resource.Stream.Source.Tar -> "tar:${variant.value.tarUrls.joinToString()}"
+        is com.stremio.core.types.resource.Stream.Source.Nzb -> "nzb:${variant.value.nzbUrls.joinToString()}"
+        null -> "unknown"
+    }
+    val request = source.streamRequest
+    val evidence = listOf(
+        request.base, request.path.resource, request.path.type, request.path.id,
+        sourceEvidence, hints.videoHash, hints.filename, hints.videoSize,
+        stream.name, stream.description, stream.thumbnail,
+    ).joinToString("\u0000")
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+        .digest(evidence.toByteArray(Charsets.UTF_8))
+        .joinToString("") { "%02x".format(it) }
+    return "stream:$digest"
+}
+
+private fun com.stremio.core.types.resource.Stream.Source<*>?.toPresentationSourceKind(): StreamSourceKind = when (this) {
+    is com.stremio.core.types.resource.Stream.Source.Url -> StreamSourceKind.Direct
+    is com.stremio.core.types.resource.Stream.Source.Tramvai -> StreamSourceKind.Torrent
+    is com.stremio.core.types.resource.Stream.Source.External,
+    is com.stremio.core.types.resource.Stream.Source.PlayerFrame -> StreamSourceKind.External
+    is com.stremio.core.types.resource.Stream.Source.YouTube -> StreamSourceKind.YouTube
+    is com.stremio.core.types.resource.Stream.Source.Rar,
+    is com.stremio.core.types.resource.Stream.Source.Zip,
+    is com.stremio.core.types.resource.Stream.Source.Zip7,
+    is com.stremio.core.types.resource.Stream.Source.Tgz,
+    is com.stremio.core.types.resource.Stream.Source.Tar,
+    is com.stremio.core.types.resource.Stream.Source.Nzb -> StreamSourceKind.Archive
+    null -> StreamSourceKind.Other
 }
 
 private fun pbandk.wkt.Timestamp.toCoreTimestamp() = CoreTimestamp(seconds = seconds, nanos = nanos)

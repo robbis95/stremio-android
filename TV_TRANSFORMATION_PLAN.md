@@ -571,9 +571,29 @@ Before commit:
 - review full diff
 - `git diff --check`
 
+## Phase 5C — TV source discovery and selection
+
+Status: implemented on `feat/android-tv`, covered by pure tests, built, installed with app data preserved, and runtime-reviewed on the ARM64 Google TV emulator. Starting commit: `29733faf578782b48f5f7ca9d9981bd741363ef4`.
+
+`TvRoute.Streams` is a nested surface over the retained Details composition. It preserves the Details origin (Home, Discover, Library, or Search) and the exact selected episode across Back. Episode targets carry Core `videoId` directly with `guessStreamPath=false`; non-episodic targets carry null `videoId` and `guessStreamPath=true`. Upcoming episodes remain inert. Non-episodic Details exposes a real Choose Source action.
+
+TV stream state is separate from mobile `MainUiState` and the mobile Streams sheet. A TV-only ViewModel job cancels obsolete requests and maps Core `LoadableStreams` into immutable provider and stream state. It additionally validates `MetaDetails.selected` against the expected type, content ID, video ID, and guess semantics before applying an emission. Provider loading/ready/error status is isolated, so one error cannot clear another provider's results. Ready results render incrementally. Provider filtering is local.
+
+Each stream has a semantic key derived from request/source identity and available stable Core evidence (torrent identity/file index, hashes, filename/size, and descriptive fallback); flattened mobile list index is not authoritative. An interaction snapshot updates existing rows in place, removes missing rows, and appends arrivals in Core order, preserving focus where possible. Stream behavior hints and Core source variants are retained in the app model. The selector only marks a chosen source; no resolve/play/player/history path is called.
+
+### Phase 5C runtime audit
+
+Silo S2E7 (`videoId` from the real episode row) produced 3 provider requests: Local Files error with 0 streams, NoTorrent ready with 19, and Torrentio ready with 52 (71 provider results total). Arrival order was Torrentio then NoTorrent. The screen showed ready streams while preserving the provider error and allowed local filtering. Five duplicate semantic identities were collapsed, leaving 66 unique displayed options. Source-kind and metadata coverage counts below are for those 66 displayed options: Direct 12, Torrent 52, External 2, YouTube 0, Archive 0, Other 0; `bingeGroup` 52, filename 52, videoHash 0, videoSize 0, `notWebReady` 0, display quality 54, seeds 52, and parsed size 52. No raw URLs or filenames are recorded in committed docs.
+
+Runtime checks exercised 10+ paced row moves, filtering, selection distinct from focus, idle stability, Details return to Season 2/S2E7 with the exact episode row focused, and re-entry to the same S2E7 stream target. An S0E4 all-provider error state also remained usable and returned focus to the same episode. A naturally timed different-episode stale race was not observed; the semantic guard and cancellation are unit-tested. S4E1 Upcoming was previously verified inert at the episode-browser gate; no stream route opened from that row in Phase 5C checks. The non-episodic Choose Source action is present, but no movie stream audit was captured: an automatic review rejected an emulator key sequence because focus could have activated Add to Library. Dedicated pure tests and source review cover target creation and guess-stream semantics.
+
+Source call-path review confirms selection does not call `resolvePlayableUrl`, `PlaybackRepository.resolveAndLoadStream`, `MainViewModel.playStream`, `proceedWithPlayback`, or load the Player. Runtime remained on the TV Details/Streams route; no player load or playback-start event was observed. No raw URLs are logged. Filtered logcat contained no FocusRelatedWarning, FocusRequester warning, Compose exception, AndroidRuntime fatal, or app-process ANR in the checked interval.
+
+Sixteen new pure tests cover target semantics, stale target matching, provider isolation, stream identity and metadata, interaction-stable ordering, selection clearing, filtering, focus fallback, upcoming behavior, nested route, and non-episodic action availability. The full existing suite remains included (111 tests total). The requested compile, assemble, and unit-test tasks passed. Screenshots are outside Git under `/private/tmp/stremio-android-tv-phase5c/`.
+
 ## Current next gate
 
-Phase 5A Details and Phase 5B season/episode browsing are implemented, tested, built, and runtime-reviewed above. The shell has real Home, Discover, Library, and Search destinations with route-origin return. The exact next milestone is Phase 5C: add TV-native stream selection activated from a focused episode, using the existing Core stream-resolution path and preserving the selected episode identity. Keep stream discovery out of focus/season changes; do not begin playback, Smart Play, Smart Fallback, Skip Segments, or seamless playback in Phase 5C.
+Phase 5C source discovery/selection is complete. The next exact milestone is Phase 6A: add the ordinary TV playback handoff from the selected `StreamOption`, then integrate the existing Core resolve-and-load flow with the existing Player surface. Keep this first playback path explicit and manually selected; do not add Smart Play/ranking, fallback, Skip Segments, next-episode preparation, or preload. Instrument source selection → resolution → player prepare → first frame and verify supported ExoPlayer/MPV paths on TV before starting the staged Playback Experience roadmap.
 
 The Phase 3B late Home catalog emission remains a watch item. This phase did not stage a controlled late Home emission, and the historical focus warning remains a watch item because it has not reproduced. Continue observing normal asynchronous catalog arrivals in future runtime checks.
 

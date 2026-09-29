@@ -22,7 +22,9 @@ private enum class TvRoute { Login, Home, Details }
 
 @Composable
 internal fun TvApp(viewModel: MainViewModel) {
-    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val account by viewModel.tvAccount.collectAsStateWithLifecycle()
+    val boardShelves by viewModel.tvBoardShelves.collectAsStateWithLifecycle()
+    val selectedDetails by viewModel.tvSelectedDetails.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
@@ -31,7 +33,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     var detailsRequested by remember { mutableStateOf(false) }
     val focusMemory = rememberTvFocusMemory()
     val route = runCatching { TvRoute.valueOf(routeName) }.getOrDefault(TvRoute.Login)
-    val authenticated = uiState.account.isAuthenticated
+    val authenticated = account.isAuthenticated
 
     LaunchedEffect(routeName) {
         if (routeName == TvRoute.Login.name) {
@@ -52,8 +54,8 @@ internal fun TvApp(viewModel: MainViewModel) {
             routeName = TvRoute.Login.name
         }
     }
-    LaunchedEffect(routeName, uiState.selectedDetails) {
-        if (routeName == TvRoute.Details.name && uiState.selectedDetails == null && !detailsRequested) {
+    LaunchedEffect(routeName, selectedDetails) {
+        if (routeName == TvRoute.Details.name && selectedDetails == null && !detailsRequested) {
             // A recreated activity cannot retain an in-memory detail request; recover to Home.
             restoreFocusRequestId++
             routeName = TvRoute.Home.name
@@ -77,14 +79,14 @@ internal fun TvApp(viewModel: MainViewModel) {
                 isRestoring -> TvStartupScreen()
                 authenticated && route == TvRoute.Login -> TvStartupScreen()
                 route == TvRoute.Login || !authenticated -> TvLoginScreen(
-                    account = uiState.account,
+                    account = account,
                     linkState = tvLinkState,
                     onLogin = viewModel::login,
                     onRequestNewLink = viewModel::requestNewTvAccountLink,
                 )
                 else -> {
                     TvHomeScreen(
-                        shelves = uiState.boardShelves,
+                        shelves = boardShelves,
                         isBoardLoading = isBoardLoading,
                         isActive = route == TvRoute.Home,
                         restoreFocusRequestId = restoreFocusRequestId,
@@ -97,7 +99,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                     )
                     if (route == TvRoute.Details) {
                         TvDetailsScreen(
-                            details = uiState.selectedDetails,
+                            details = selectedDetails,
                             onBack = returnToHome,
                         )
                     }

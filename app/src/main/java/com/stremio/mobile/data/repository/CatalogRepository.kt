@@ -5,6 +5,7 @@ import com.stremio.mobile.core.extensions.optNullableString
 import com.stremio.mobile.core.extensions.use
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.data.model.CatalogShelf
+import com.stremio.mobile.data.model.toCatalogItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -89,19 +90,7 @@ class CatalogRepository(private val core: StremioCore) {
         return discover.catalog.pages.flatMap { page ->
             val content = page.content
             if (content is com.stremio.core.models.LoadablePage.Content.Ready) {
-                content.value.metaItems.map { item ->
-                    CatalogItem(
-                        id = item.id,
-                        type = item.type,
-                        name = item.name,
-                        poster = item.poster,
-                        background = item.background,
-                        releaseInfo = item.releaseInfo,
-                        imdbRating = null,
-                        inCinema = item.inCinema,
-                        watched = item.watched
-                    )
-                }
+                content.value.metaItems.map { item -> item.toCatalogItem() }
             } else {
                 emptyList()
             }

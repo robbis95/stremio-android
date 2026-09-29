@@ -3,6 +3,7 @@ package com.stremio.mobile.data.repository
 import com.stremio.mobile.core.StremioCore
 import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.data.model.CatalogShelf
+import com.stremio.mobile.data.model.toCatalogItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -30,17 +31,7 @@ class BoardRepository(private val core: StremioCore) {
                 val items = when (val content = page.content) {
                     is com.stremio.core.models.LoadablePage.Content.Ready -> {
                         content.value.metaItems.map { item ->
-                            CatalogItem(
-                                id = item.id,
-                                type = item.type,
-                                name = item.name,
-                                poster = item.poster,
-                                background = item.background,
-                                releaseInfo = item.releaseInfo,
-                                imdbRating = null,
-                                inCinema = item.inCinema,
-                                watched = item.watched
-                            )
+                            item.toCatalogItem()
                         }
                     }
                     else -> emptyList()

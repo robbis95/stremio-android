@@ -288,20 +288,26 @@ class StremioCore(context: Context) {
             id = item.id,
             type = item.type,
             name = item.name,
-            posterShape = com.stremio.core.types.resource.PosterShape.POSTER,
+            posterShape = when (item.posterShape) {
+                com.stremio.mobile.data.model.CatalogPosterShape.Landscape -> com.stremio.core.types.resource.PosterShape.LANDSCAPE
+                com.stremio.mobile.data.model.CatalogPosterShape.Square -> com.stremio.core.types.resource.PosterShape.SQUARE
+                else -> com.stremio.core.types.resource.PosterShape.POSTER
+            },
             poster = item.poster,
             background = item.background,
-            logo = null,
-            description = null,
+            logo = item.logo,
+            description = item.description,
             releaseInfo = item.releaseInfo,
-            runtime = null,
-            released = null,
-            links = emptyList(),
+            runtime = item.runtime,
+            released = item.released?.let { pbandk.wkt.Timestamp(seconds = it.seconds, nanos = it.nanos) },
+            links = item.links.map { link ->
+                com.stremio.core.types.resource.LinkPreview(name = link.name, category = link.category)
+            },
             behaviorHints = com.stremio.core.types.resource.MetaItemBehaviorHints(hasScheduledVideos = false),
             deepLinks = com.stremio.core.types.resource.MetaItemDeepLinks(),
             inLibrary = true,
-            watched = false,
-            inCinema = false
+            watched = item.watched,
+            inCinema = item.inCinema
         )
         val action = Action(Action.Type.Ctx(ActionCtx(ActionCtx.Args.AddToLibrary(preview))))
         dispatch(action, Field.CTX)

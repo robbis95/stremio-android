@@ -14,4 +14,18 @@ data class CatalogItem(
     val remainingEpisodes: Int? = null,
     val continueWatchingVideoId: String? = null,
     val isContinueWatching: Boolean = false,
+    val posterShape: CatalogPosterShape? = null,
+    val logo: String? = null,
+    val description: String? = null,
+    val runtime: String? = null,
+    val released: CoreTimestamp? = null,
+    val links: List<CatalogLink> = emptyList(),
+    val inLibrary: Boolean? = null,
 )
+
+enum class CatalogPosterShape { Poster, Landscape, Square }
+
+data class CatalogLink(val name: String, val category: String)
+
+/** Exact protobuf timestamp components, without timezone or precision loss. */
+data class CoreTimestamp(val seconds: Long, val nanos: Int)

@@ -9,4 +9,9 @@ data class EpisodeOption(
     val releaseDate: String?,
     val watched: Boolean,
     val isCurrent: Boolean,
+    val overview: String? = null,
+    /** Core defines this as watch progress percentage; retain its Double value unchanged. */
+    val progress: Double? = null,
+    val upcoming: Boolean = false,
+    val released: CoreTimestamp? = null,
 )

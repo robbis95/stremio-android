@@ -3,7 +3,7 @@
 Status: active technical strategy  
 Research date: 2026-09-29  
 Canonical branch: `feat/android-tv`  
-Current TV implementation baseline: `ad51e362e51062312871cc6737729685b0b97ba3`
+Current TV implementation baseline: `f8ae2245080277fa23235b18d0bcb4ccbd7deda2`
 
 This document turns the TV design direction into implementation rules grounded in the Stremio architecture, the capabilities exposed by the current Android client, the vendored Kotlin/Core bridge, and current Android TV performance guidance.
 
@@ -667,6 +667,8 @@ When Android Studio/emulator is available:
 
 ### Gate 2 — data preservation
 
+Status: implemented on `feat/android-tv` after baseline `f8ae2245080277fa23235b18d0bcb4ccbd7deda2`.
+
 Before building the real Home hero:
 - audit MetaItemPreview mapping
 - preserve high-value preview fields in Android models
@@ -674,6 +676,8 @@ Before building the real Home hero:
 - avoid changing focus behavior
 
 ### Gate 3 — TV state slicing
+
+Status: implemented for the current TV root. `TvApp` collects read-only account, board-shelf, and selected-details flows; Continue Watching is exposed independently for a later Home phase.
 
 Expose minimal Home/auth/details TV state so TvApp does not depend on the full MainUiState for every screen.
 

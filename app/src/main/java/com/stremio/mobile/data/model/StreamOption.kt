@@ -13,4 +13,9 @@ data class StreamOption(
     val size: String? = null,
     val origin: String? = null,
     val cleanDescription: String? = null,
+    val bingeGroup: String? = null,
+    val notWebReady: Boolean = false,
+    val filename: String? = null,
+    val videoSize: Long? = null,
+    val videoHash: String? = null,
 )

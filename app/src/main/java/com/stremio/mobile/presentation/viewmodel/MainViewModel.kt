@@ -10,7 +10,6 @@ import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Event
 import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.core.StremioCore
-import com.stremio.mobile.core.utils.parseStreamDescription
 import com.stremio.mobile.data.model.*
 import com.stremio.mobile.data.repository.*
 import com.stremio.mobile.player.PlaybackState
@@ -41,6 +40,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -76,6 +76,7 @@ class MainViewModel(
     private val appContext = appContext.applicationContext
     private val latestIntentUri = MutableStateFlow<String?>(null)
     private val account = MutableStateFlow(authRepository.accountFromCore())
+    val tvAccount: StateFlow<AccountUiState> = account.asStateFlow()
     private val stremioLinkRepository = StremioLinkRepository()
     private val _tvAccountLink = MutableStateFlow(TvAccountLinkUiState())
     val tvAccountLink: StateFlow<TvAccountLinkUiState> = _tvAccountLink
@@ -94,8 +95,11 @@ class MainViewModel(
     private val showNoSeedsBanner = MutableStateFlow(false)
     private val noSeedsReason = MutableStateFlow<String?>(null)
     private val selectedDetails = MutableStateFlow<MetaDetails?>(null)
+    val tvSelectedDetails: StateFlow<MetaDetails?> = selectedDetails.asStateFlow()
     private val continueWatching = MutableStateFlow(CatalogShelf(title = "Continue Watching"))
+    val tvContinueWatching: StateFlow<CatalogShelf> = continueWatching.asStateFlow()
     private val boardShelves = MutableStateFlow<List<CatalogShelf>>(emptyList())
+    val tvBoardShelves: StateFlow<List<CatalogShelf>> = boardShelves.asStateFlow()
     private val isBoardLoading = MutableStateFlow(true)
     val tvBoardLoading: StateFlow<Boolean> = isBoardLoading
     private val requestedRequests = mutableSetOf<String>()
@@ -1122,15 +1126,10 @@ class MainViewModel(
                                 val seasons = videos.mapNotNull { it.seriesInfo?.season?.toInt() }.distinct().sorted()
                                 val defaultSeason = defaultSeasonForVideos(videos) ?: seasons.firstOrNull()
                                 val episodes = videos.map { video ->
-                                    EpisodeOption(
-                                        videoId = video.id,
+                                    video.toEpisodeOption(
                                         season = video.seriesInfo?.season?.toInt() ?: 0,
                                         episode = video.seriesInfo?.episode?.toInt() ?: 0,
-                                        title = video.title,
-                                        thumbnail = video.thumbnail,
                                         releaseDate = formatReleaseDate(video.released),
-                                        watched = video.watched,
-                                        isCurrent = video.currentVideo,
                                     )
                                 }
                                 if (streams.value.isOpen) {
@@ -1311,25 +1310,7 @@ class MainViewModel(
     }
 
     private fun buildStreamOption(index: Int, coreStream: CoreStream): StreamOption {
-        val rawDescription = coreStream.stream.description?.takeIf { it.isNotBlank() }
-            ?: coreStream.stream.thumbnail
-        val parsed = parseStreamDescription(rawDescription)
-        val quality = coreStream.stream.name?.let { name ->
-            val resolutions = listOf("2160p", "4k", "1080p", "720p", "480p")
-            resolutions.firstOrNull { name.contains(it, ignoreCase = true) }
-        }
-        return StreamOption(
-            key = "$index-${coreStream.addonTitle}-${coreStream.stream.name ?: ""}-${rawDescription ?: ""}",
-            name = coreStream.stream.name?.takeIf { it.isNotBlank() } ?: coreStream.addonTitle,
-            description = rawDescription,
-            addonTitle = coreStream.addonTitle,
-            quality = quality,
-            core = coreStream,
-            seeds = parsed.seeds,
-            size = parsed.size,
-            origin = parsed.origin,
-            cleanDescription = parsed.cleanDescription,
-        )
+        return coreStream.toStreamOption(index)
     }
 
     fun closeStreams() {

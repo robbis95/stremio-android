@@ -1,8 +1,8 @@
 package com.stremio.mobile.presentation.tv.components
 
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.Arrangement
@@ -67,7 +67,7 @@ internal fun TvPosterCard(
                     else -> false
                 }
             }
-            .focusable()
+            .clickable(enabled = enabled, onClick = onActivate, indication = null, interactionSource = null)
             .shadow(if (isFocused) 14.dp else 0.dp, shape, clip = false)
             .background(TvColors.surface, shape)
             .tvFocusTreatment(isFocused, TvDimens.controlRadius)

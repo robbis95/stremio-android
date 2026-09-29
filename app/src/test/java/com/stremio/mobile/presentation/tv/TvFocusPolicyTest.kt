@@ -4,6 +4,7 @@ import com.stremio.mobile.data.model.CatalogItem
 import com.stremio.mobile.presentation.tv.focus.FocusShelf
 import com.stremio.mobile.presentation.tv.focus.TvFocusLocation
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
+import com.stremio.mobile.presentation.tv.focus.preferredRestoreLocation
 import com.stremio.mobile.presentation.tv.focus.resolveFocusLocation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -51,5 +52,16 @@ class TvFocusPolicyTest {
     @Test fun rememberedItemSurvivesItemOrderingChanges() {
         val wanted = TvFocusLocation("a", contentFocusKey("movie", "two"), 0)
         assertEquals(wanted, resolveFocusLocation(wanted, listOf(shelf("a", "two", "one")), emptyMap()))
+    }
+
+    @Test fun explicitRouteReturnTargetWinsOverCurrentMemory() {
+        val routeTarget = TvFocusLocation("shelf", contentFocusKey("movie", "opened"), 2)
+        val currentMemory = TvFocusLocation("shelf", contentFocusKey("movie", "later"), 2)
+        assertEquals(routeTarget, preferredRestoreLocation(routeTarget, currentMemory))
+    }
+
+    @Test fun currentMemoryIsUsedWithoutRouteReturnTarget() {
+        val currentMemory = TvFocusLocation("shelf", contentFocusKey("movie", "remembered"), 1)
+        assertEquals(currentMemory, preferredRestoreLocation(null, currentMemory))
     }
 }

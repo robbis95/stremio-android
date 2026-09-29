@@ -39,6 +39,7 @@ import com.stremio.mobile.presentation.tv.focus.TvFocusLocation
 import com.stremio.mobile.presentation.tv.focus.TvFocusMemory
 import com.stremio.mobile.presentation.tv.focus.TvFocusRegistry
 import com.stremio.mobile.presentation.tv.focus.contentFocusKey
+import com.stremio.mobile.presentation.tv.focus.preferredRestoreLocation
 import com.stremio.mobile.presentation.tv.focus.resolveFocusLocation
 import com.stremio.mobile.presentation.tv.focus.shelfFocusKeys
 import com.stremio.mobile.presentation.tv.theme.TvColors
@@ -61,6 +62,7 @@ internal fun TvHomeScreen(
     val rowStates = remember { mutableStateMapOf<String, LazyListState>() }
     var pendingRestore by remember { mutableStateOf<TvFocusLocation?>(null) }
     var focusedLocation by remember { mutableStateOf<TvFocusLocation?>(null) }
+    var detailsReturnTarget by remember { mutableStateOf<TvFocusLocation?>(null) }
     val latestShelves by rememberUpdatedState(shelves)
     val latestKeys by rememberUpdatedState(shelfKeys)
     val latestFocusShelves by rememberUpdatedState(focusShelves)
@@ -81,13 +83,14 @@ internal fun TvHomeScreen(
         focusedLocation = location
         latestMemory.remember(location.shelfKey, location.contentKey, location.shelfIndex)
         pendingRestore = null
+        if (detailsReturnTarget != null) detailsReturnTarget = null
     }
 
     // Only route activation/restoration drives this. Catalog emissions are observed only while waiting
     // for the one explicit request to become satisfiable; they never restart a completed request.
     LaunchedEffect(isActive, restoreFocusRequestId) {
         if (!isActive) return@LaunchedEffect
-        val requested = focusMemory.location
+        val requested = preferredRestoreLocation(detailsReturnTarget, focusMemory.location)
         val requestedContentKey = requested?.contentKey
         snapshotFlow { Triple(latestShelves, latestKeys, latestLoading) }.first { (currentShelves, keys, loading) ->
             val requestedIndex = requested?.let { keys.indexOf(it.shelfKey) } ?: -1
@@ -128,9 +131,11 @@ internal fun TvHomeScreen(
                         shelf.items.isNotEmpty() -> TvShelfRow(
                             shelfKeys[index], shelf.items, isActive, registry, rowStates,
                             onFocused = { content ->
-                                val location = TvFocusLocation(shelfKeys[index], content)
-                                focusedLocation = location
-                                focusMemory.remember(location.shelfKey, location.contentKey, index)
+                                if (isActive) {
+                                    val location = TvFocusLocation(shelfKeys[index], content, index)
+                                    focusedLocation = location
+                                    focusMemory.remember(location.shelfKey, location.contentKey, index)
+                                }
                             },
                             onVertical = { content, direction ->
                                 val neighbors = focusable
@@ -144,7 +149,9 @@ internal fun TvHomeScreen(
                                 }
                             },
                             onActivate = { item, content ->
-                                focusMemory.remember(shelfKeys[index], content, index)
+                                val location = TvFocusLocation(shelfKeys[index], content, index)
+                                focusMemory.remember(location.shelfKey, location.contentKey, index)
+                                detailsReturnTarget = location
                                 onOpenDetails(item)
                             },
                         )

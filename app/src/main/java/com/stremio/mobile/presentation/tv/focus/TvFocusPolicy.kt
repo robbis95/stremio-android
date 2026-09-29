@@ -17,6 +17,11 @@ fun shelfFocusKeys(shelves: List<CatalogShelf>): List<String> {
 
 data class FocusShelf(val key: String, val items: List<CatalogItem>, val isLoading: Boolean)
 
+/** A pinned route return location takes precedence over mutable, latest Home focus memory. */
+fun preferredRestoreLocation(
+    routeReturnTarget: TvFocusLocation?, currentMemory: TvFocusLocation?,
+): TvFocusLocation? = routeReturnTarget ?: currentMemory
+
 /** Resolves return focus after catalog data settles. Shelf ordering is intentionally irrelevant. */
 fun resolveFocusLocation(
     requested: TvFocusLocation?, shelves: List<FocusShelf>, remembered: Map<String, String>,

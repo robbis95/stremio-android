@@ -1,6 +1,7 @@
 package com.stremio.mobile.presentation.tv
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,7 +29,6 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
@@ -46,7 +46,7 @@ internal fun TvDetailsScreen(
     var backFocused by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { backRequester.requestFocus() }
 
-    Box(Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 38.dp)) {
+    Box(Modifier.fillMaxSize().background(TvColors.background).padding(horizontal = 64.dp, vertical = 38.dp)) {
         Row(
             modifier = Modifier.fillMaxSize().padding(bottom = 54.dp),
             horizontalArrangement = Arrangement.spacedBy(42.dp),
@@ -68,7 +68,7 @@ internal fun TvDetailsScreen(
                 Text(
                     text = details?.item?.name ?: "Loading title…",
                     style = MaterialTheme.typography.headlineLarge,
-                    color = Color.White,
+                    color = TvColors.primaryText,
                 )
                 Spacer(Modifier.height(12.dp))
                 val metadata = listOfNotNull(details?.year, details?.runtime, details?.item?.type?.replaceFirstChar { it.uppercase() })
@@ -77,14 +77,14 @@ internal fun TvDetailsScreen(
                     Spacer(Modifier.height(20.dp))
                 }
                 when {
-                    details == null || details.isLoading -> Text("Loading details…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
+                    details == null || details.isLoading -> Text("Loading details…", color = TvColors.secondaryText, style = MaterialTheme.typography.bodyLarge)
                     details.error != null -> Text(details.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
-                    !details.description.isNullOrBlank() -> Text(details.description, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge)
-                    else -> Text("No description is available.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyLarge)
+                    !details.description.isNullOrBlank() -> Text(details.description, color = TvColors.primaryText, style = MaterialTheme.typography.bodyLarge)
+                    else -> Text("No description is available.", color = TvColors.secondaryText, style = MaterialTheme.typography.bodyLarge)
                 }
                 if (details?.genres?.isNotEmpty() == true) {
                     Spacer(Modifier.height(18.dp))
-                    Text(details.genres.joinToString("  •  "), color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleSmall)
+                    Text(details.genres.joinToString("  •  "), color = TvColors.secondaryText, style = MaterialTheme.typography.titleSmall)
                 }
             }
         }

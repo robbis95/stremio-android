@@ -15,6 +15,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.stremio.mobile.presentation.viewmodel.MainViewModel
+import com.stremio.mobile.presentation.tv.focus.rememberTvFocusMemory
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvTheme
 

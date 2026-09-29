@@ -211,6 +211,6 @@ private fun createQrBitmap(value: String): Bitmap? = runCatching {
 @Composable
 private fun TvLoginScreenPreview() {
     TvTheme {
-        TvLoginScreen(AccountUiState(), TvAccountLinkUiState(isLoading = true), {}, {})
+        TvLoginScreen(AccountUiState(), TvAccountLinkUiState(isLoading = true), { _, _ -> }, {})
     }
 }

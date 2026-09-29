@@ -88,10 +88,11 @@ internal fun TvHomeScreen(
     LaunchedEffect(isActive, restoreFocusRequestId) {
         if (!isActive) return@LaunchedEffect
         val requested = focusMemory.location
+        val requestedContentKey = requested?.contentKey
         snapshotFlow { Triple(latestShelves, latestKeys, latestLoading) }.first { (currentShelves, keys, loading) ->
             val requestedIndex = requested?.let { keys.indexOf(it.shelfKey) } ?: -1
             val requestedItemExists = requestedIndex >= 0 && currentShelves[requestedIndex].items.any {
-                contentFocusKey(it.type, it.id) == requested.contentKey
+                contentFocusKey(it.type, it.id) == requestedContentKey
             }
             val requestedStillLoading = requestedIndex >= 0 && currentShelves[requestedIndex].isLoading && !requestedItemExists
             requestedItemExists || (!loading && !requestedStillLoading)

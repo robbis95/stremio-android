@@ -10,6 +10,11 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 
 class TvHomePresentationTest {
     private fun item(
@@ -96,6 +101,99 @@ class TvHomePresentationTest {
     @Test
     fun initialHeroIsNullWhenNoRealPreviewExists() {
         assertNull(initialHeroCandidate(CatalogShelf("Continue Watching", isLoading = false), emptyList()))
+    }
+
+    @Test
+    fun initialHeroPrefersBackgroundOverPosterOnlyContinueWatchingItem() {
+        val posterOnly = item("poster-only", poster = "portrait").copy(posterShape = CatalogPosterShape.Poster)
+        val backdrop = item("backdrop").copy(background = "real-background")
+        assertEquals(
+            "backdrop",
+            initialHeroCandidate(
+                CatalogShelf("Continue Watching", listOf(posterOnly, backdrop), false),
+                emptyList(),
+            )?.id,
+        )
+    }
+
+    @Test
+    fun landscapeArtworkIsHeroCapable() {
+        val landscape = item("landscape", poster = "real-landscape")
+            .copy(posterShape = CatalogPosterShape.Landscape)
+        assertEquals(3, heroPresentationQuality(landscape))
+        assertEquals(TvHeroArtworkTreatment.RichArtwork, heroArtworkTreatment(landscape))
+    }
+
+    @Test
+    fun descriptionAndLogoImproveHeroSuitabilityOverPosterOnlyArtwork() {
+        val posterOnly = item("poster", poster = "portrait")
+        val withDescription = item("description").copy(description = "Real description")
+        val withLogo = item("logo").copy(logo = "real-logo")
+
+        assertTrue(heroPresentationQuality(withDescription) > heroPresentationQuality(posterOnly))
+        assertTrue(heroPresentationQuality(withLogo) > heroPresentationQuality(posterOnly))
+        assertEquals("description", initialHeroCandidate(
+            CatalogShelf("Continue Watching", listOf(posterOnly), false),
+            listOf(CatalogShelf("Board", listOf(withDescription), false)),
+        )?.id)
+    }
+
+    @Test
+    fun heroCapableContinueWatchingItemIsPreferredOverHeroCapableBoardItem() {
+        val watching = item("cw", poster = "landscape")
+            .copy(posterShape = CatalogPosterShape.Landscape)
+        val board = item("board").copy(background = "real-background")
+
+        assertEquals("cw", initialHeroCandidate(
+            CatalogShelf("Continue Watching", listOf(watching), false),
+            listOf(CatalogShelf("Board", listOf(board), false)),
+        )?.id)
+    }
+
+    @Test
+    fun heroCapableBoardItemIsPreferredOverPosterOnlyContinueWatchingItem() {
+        val watching = item("cw", poster = "portrait")
+        val board = item("board").copy(logo = "real-logo")
+
+        assertEquals("board", initialHeroCandidate(
+            CatalogShelf("Continue Watching", listOf(watching), false),
+            listOf(CatalogShelf("Board", listOf(board), false)),
+        )?.id)
+    }
+
+    @Test
+    fun weakContinueWatchingItemRemainsFallbackWhenBoardHasNoRicherContent() {
+        val watching = item("cw", poster = "portrait")
+        val board = item("board")
+
+        assertEquals("cw", initialHeroCandidate(
+            CatalogShelf("Continue Watching", listOf(watching), false),
+            listOf(CatalogShelf("Board", listOf(board), false)),
+        )?.id)
+    }
+
+    @Test
+    fun focusedPosterOnlyItemStillBecomesHeroAfterDwell() = runBlocking {
+        val focused = item("focused", poster = "portrait")
+        val controller = TvHeroPreviewController(CoroutineScope(Dispatchers.Unconfined), item("initial"))
+
+        assertEquals(0, heroPresentationQuality(focused))
+        controller.onFocused(focused)
+        assertEquals(item("initial"), controller.item.value)
+        withTimeout(2_000) {
+            while (controller.item.value != focused) delay(10)
+        }
+
+        assertEquals(focused, controller.item.value)
+    }
+
+    @Test
+    fun heroArtworkFallbackClassifiesContainedAndNeutralItems() {
+        assertEquals(TvHeroArtworkTreatment.ContainedPoster,
+            heroArtworkTreatment(item("portrait", poster = "poster")))
+        assertEquals(TvHeroArtworkTreatment.Neutral, heroArtworkTreatment(item("text-only")))
+        assertEquals(TvHeroArtworkTreatment.RichArtwork,
+            heroArtworkTreatment(item("background").copy(background = "real-background")))
     }
 
     @Test

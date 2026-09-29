@@ -8,6 +8,30 @@ import com.stremio.mobile.presentation.tv.focus.shelfFocusKeys
 
 internal const val TV_CONTINUE_WATCHING_SHELF_KEY = "tv:continue-watching"
 
+internal enum class TvHeroArtworkTreatment {
+    RichArtwork,
+    ContainedPoster,
+    Neutral,
+}
+
+internal fun heroArtworkTreatment(item: CatalogItem?): TvHeroArtworkTreatment = when {
+    item == null -> TvHeroArtworkTreatment.Neutral
+    !item.background.isNullOrBlank() -> TvHeroArtworkTreatment.RichArtwork
+    !item.poster.isNullOrBlank() && item.posterShape == com.stremio.mobile.data.model.CatalogPosterShape.Landscape ->
+        TvHeroArtworkTreatment.RichArtwork
+    !item.poster.isNullOrBlank() -> TvHeroArtworkTreatment.ContainedPoster
+    else -> TvHeroArtworkTreatment.Neutral
+}
+
+/** Higher scores describe real preview fields that work especially well in the Home hero. */
+internal fun heroPresentationQuality(item: CatalogItem): Int = when {
+    !item.background.isNullOrBlank() -> 4
+    !item.poster.isNullOrBlank() && item.posterShape == com.stremio.mobile.data.model.CatalogPosterShape.Landscape -> 3
+    !item.logo.isNullOrBlank() -> 2
+    !item.description.isNullOrBlank() -> 1
+    else -> 0
+}
+
 internal sealed interface TvHomeSection {
     val lazyKey: String
 
@@ -78,12 +102,18 @@ internal fun initialHeroCandidate(
     boardShelves: List<CatalogShelf>,
 ): CatalogItem? {
     val enrichedContinueWatching = enrichContinueWatching(continueWatching, boardShelves)
+    fun bestHeroCapable(items: Sequence<CatalogItem>): CatalogItem? = items
+        .filter { it.name.isNotBlank() && heroPresentationQuality(it) > 0 }
+        .maxByOrNull(::heroPresentationQuality)
+
+    bestHeroCapable(enrichedContinueWatching.items.asSequence())?.let { return it }
+    bestHeroCapable(boardShelves.asSequence().flatMap { it.items.asSequence() })?.let { return it }
+
     enrichedContinueWatching.items.firstOrNull { item ->
-        item.name.isNotBlank() && listOf(
-            item.poster, item.background, item.logo, item.description, item.releaseInfo, item.runtime,
-        ).any { !it.isNullOrBlank() }
+        item.name.isNotBlank() && listOf(item.poster, item.releaseInfo, item.runtime)
+            .any { !it.isNullOrBlank() }
     }?.let { return it }
-    return boardShelves.firstNotNullOfOrNull { shelf -> shelf.items.firstOrNull() }
+    return boardShelves.asSequence().flatMap { it.items.asSequence() }.firstOrNull { it.name.isNotBlank() }
 }
 
 internal fun buildTvHomePresentation(

@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
@@ -29,25 +31,35 @@ import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.stremio.mobile.R
 import com.stremio.mobile.data.model.CatalogItem
-import com.stremio.mobile.data.model.CatalogPosterShape
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
+
+internal const val TV_HOME_HERO_HEIGHT_DP = 142
 
 @Composable
 internal fun TvHomeHero(controller: TvHeroPreviewController, isBoardLoading: Boolean) {
     val preview by controller.item
-    val backgroundArtwork = preview?.background?.takeIf { it.isNotBlank() }
-        ?: preview?.let { candidate -> candidate.poster?.takeIf { candidate.posterShape == CatalogPosterShape.Landscape } }
+    val treatment = heroArtworkTreatment(preview)
+    val richArtwork = when (treatment) {
+        TvHeroArtworkTreatment.RichArtwork -> preview?.background?.takeIf { it.isNotBlank() }
+            ?: preview?.poster?.takeIf { it.isNotBlank() }
+        TvHeroArtworkTreatment.ContainedPoster, TvHeroArtworkTreatment.Neutral -> null
+    }
+    val containedPoster = preview?.poster?.takeIf { it.isNotBlank() }
+        ?.takeIf { treatment == TvHeroArtworkTreatment.ContainedPoster }
+    val shape = RoundedCornerShape(18.dp)
+
     Box(
-        Modifier.fillMaxWidth().height(128.dp)
-            .background(TvColors.surface, RoundedCornerShape(18.dp)),
+        Modifier.fillMaxWidth().height(TV_HOME_HERO_HEIGHT_DP.dp)
+            .clip(shape)
+            .background(TvColors.surface),
     ) {
-        if (backgroundArtwork != null) {
+        if (richArtwork != null) {
             AsyncImage(
-                model = backgroundArtwork,
+                model = richArtwork,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(18.dp)),
+                modifier = Modifier.fillMaxSize(),
             )
             Box(
                 Modifier.fillMaxSize().background(
@@ -60,35 +72,48 @@ internal fun TvHomeHero(controller: TvHeroPreviewController, isBoardLoading: Boo
                 ),
             )
         }
-        val containedPoster = if (backgroundArtwork == null) preview?.poster?.takeIf { it.isNotBlank() } else null
+
         if (containedPoster != null) {
-            AsyncImage(
-                model = containedPoster,
-                contentDescription = preview?.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.align(androidx.compose.ui.Alignment.CenterEnd).padding(end = 24.dp)
-                    .width(88.dp).fillMaxHeight(0.82f).clip(RoundedCornerShape(8.dp)),
-            )
+            Box(
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(174.dp)
+                    .clip(RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp))
+                    .background(
+                        Brush.horizontalGradient(
+                            0f to TvColors.surface,
+                            0.28f to TvColors.artworkPanel,
+                            1f to TvColors.artworkPanel,
+                        ),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                AsyncImage(
+                    model = containedPoster,
+                    contentDescription = preview?.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.height(122.dp).aspectRatio(2f / 3f)
+                        .clip(RoundedCornerShape(9.dp)),
+                )
+            }
         }
+
+        // Keep the Stremio mark subtle and away from the content-title hierarchy.
+        Image(
+            painter = painterResource(R.drawable.ic_stremio_splash_logo),
+            contentDescription = "Stremio",
+            modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 12.dp, end = 16.dp).height(15.dp),
+            alpha = 0.68f,
+        )
+
         Column(
-            Modifier.align(androidx.compose.ui.Alignment.BottomStart).padding(
-                start = TvDimens.safeHorizontal,
-                end = if (containedPoster != null) 132.dp else TvDimens.safeHorizontal,
-                bottom = 8.dp,
-            ),
+            Modifier.align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .padding(
+                    start = TvDimens.safeHorizontal,
+                    end = if (containedPoster != null) 204.dp else TvDimens.safeHorizontal,
+                    bottom = 8.dp,
+                ),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
-            androidx.compose.foundation.layout.Row(
-                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Image(
-                    painter = painterResource(R.drawable.ic_stremio_splash_logo),
-                    contentDescription = "Stremio",
-                    modifier = Modifier.height(17.dp),
-                )
-                Text("Stremio", color = TvColors.accent, style = MaterialTheme.typography.titleSmall.copy(fontSize = 16.sp, lineHeight = 19.sp))
-            }
             if (preview != null) {
                 val logo = preview?.logo?.takeIf { it.isNotBlank() }
                 if (logo != null) {
@@ -96,24 +121,34 @@ internal fun TvHomeHero(controller: TvHeroPreviewController, isBoardLoading: Boo
                         model = logo,
                         contentDescription = preview?.name,
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.widthIn(max = 250.dp).height(27.dp),
+                        modifier = Modifier.widthIn(max = 250.dp).height(28.dp),
                     )
                 } else {
                     Text(
                         preview?.name.orEmpty(),
                         color = TvColors.primaryText,
-                        style = MaterialTheme.typography.headlineSmall.copy(fontSize = 25.sp, lineHeight = 30.sp),
+                        style = MaterialTheme.typography.headlineSmall.copy(fontSize = 26.sp, lineHeight = 31.sp),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
                 }
                 metadataLine(preview!!)?.let { metadata ->
-                    Text(metadata, color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        metadata,
+                        color = TvColors.secondaryText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 preview?.description?.takeIf { it.isNotBlank() }?.let { description ->
-                    Text(description, color = TvColors.primaryText, style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        description,
+                        color = TvColors.primaryText,
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 14.sp, lineHeight = 17.sp),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             } else {
                 Text("Home", color = TvColors.primaryText, style = MaterialTheme.typography.headlineSmall)

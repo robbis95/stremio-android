@@ -16,6 +16,11 @@ internal object TvColors {
     val focusSoft = Color(0x336045B8)
     val disabled = Color(0xFFAAA8A4)
     val error = Color(0xFFB3261E)
+    val mediaSurface = Color(0xFF242329)
+    val onMedia = Color(0xFFF8F6F2)
+    val mediaSecondary = Color(0xFFD0CDD4)
+    val mediaTrack = Color(0xFF77737E)
+    val artworkPanel = Color(0xFFEAE7E1)
 }
 
 internal object TvDimens {

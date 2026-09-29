@@ -306,7 +306,33 @@ Runtime results:
 - Continue Watching Details activation and Back restored the exact focused CW card. Board Details activation and Back also restored the exact focused item, including a far-right board item across repeated cycles
 - visibility callbacks loaded only the current and nearby board catalogs at original indices 3, 4, and 5 during traversal. A late shelf error arrived in the test window and was isolated. A successful late catalog population while focus was active was not confirmed, so the asynchronous successful-emission check remains open
 - a 30-second idle interval on Home retained the visible focus and scroll position. Filtered logcat contained no `FocusRelatedWarning`, `FocusRequester`, `FATAL EXCEPTION`, `AndroidRuntime`, Compose exception, or ANR match
-- the hero naturally scrolls with the feed. At the tested viewport, the board-focused view has already scrolled the hero offscreen; a simultaneous board focus and visible hero is not expected in this layout
+- the hero naturally scrolls with the feed. It can remain partly visible while the first board row is focused and leaves the viewport farther down the feed; it never receives focus
+
+### Phase 3B-B — Production Home visual polish
+
+Status: implemented, unit-tested, built, installed, and visually verified on the 1920×1080 Google TV ARM64 emulator (960×540 dp). The Home content shell is visually ready for later top-level navigation integration. This does not complete all of Phase 3B.
+
+Implemented:
+- the stable Home hero is 142 dp high at the tested viewport
+- rich-artwork mode uses a real background or a poster explicitly classified as Landscape, fills the hero with that source, preserves its original colors, and protects copy with the existing horizontal light-theme gradient. It shows the real logo when available, otherwise the title, then available metadata and at most two description lines
+- contained-artwork mode uses a neutral artwork panel and a true 2:3 contained poster. Portrait art is not stretched, cropped into a backdrop, blurred, or recolored. Name-only and name-plus-poster previews remain valid
+- the Stremio icon remains as a small, low-emphasis mark at the lower right of the hero, away from the content-title hierarchy
+- initial hero selection now ranks real preview suitability within these source priorities: best hero-capable enriched Continue Watching item; best hero-capable board item; useful enriched Continue Watching item; first named real board item; null. Background, Landscape poster, logo, and description are the hero-capable signals. Poster-only Continue Watching is a weak fallback. Popularity is not scored and no content is invented
+- once a real item receives focus, the existing 150 ms dwell still previews that exact item even when its hero quality is weak
+- both Continue Watching modes now share the dark media surface and light type. Portrait fallback artwork is 88×132 dp (2:3) inside the existing 292×164 dp card. Title, real metadata, flexible space, and the real progress track form the text layout; no episode label or video ID is fabricated
+- rich CW artwork retains its dark readability gradient. The same media track and accent progress treatment appear in both modes
+
+Runtime results:
+- the For All Mankind poster-only hero showed the title, contained artwork panel, and a properly proportioned portrait while the first focused CW fallback showed the same poster at 88×132 dp, title, and progress on the shared dark surface
+- the American Horror Story rich hero retained its real backdrop colors; the horizontal gradient kept its real logo, metadata, and two-line description readable. Copy is anchored low enough to remain visible while the Home feed scrolls to focused content
+- American Horror Story and Slow Horses rich CW cards retained their landscape art, dark gradient, title/metadata, and visible progress. Focus showed one purple outline
+- Right/Left navigation, spatial Down/Up movement, and horizontally scrolled board-row retention were exercised. Moving Down from a CW item chose the visually aligned board poster; after scrolling that board row right and moving Down/Up, the same semantic board item and row position were restored
+- Details opened from a CW item and a board item; Back returned to the exact focused semantic item in each case, including a horizontally scrolled board item
+- the final ARM64 debug APK installed over the existing emulator app with app data preserved. The screen reported 1920×1080 at 320 dpi. Filtered logcat had no `FocusRelatedWarning`, `FocusRequester`, `AndroidRuntime`, `FATAL EXCEPTION`, Compose exception, or ANR match
+- `:app:compileDebugKotlin`, `:app:assembleDebug`, and `:app:testDebugUnitTest` passed. Unit tests total 43 with 0 failures (8 new Home presentation tests)
+- screenshots were captured outside the repository at `/private/tmp/stremio-android-tv-phase3bb/`: `01-initial-home.png`, `02-portrait-hero-fallback.png`, `03-rich-backdrop-hero.png`, `04-portrait-cw-focused.png`, `05-rich-cw-focused.png`, `06-details-from-cw.png`, `07-back-to-cw.png`, `18-board-enter-key.png`, and `19-back-to-board-final.png`
+
+Scope confirmation: focus registry, semantic keys, spatial traversal policy, row-position memory, `detailsReturnTarget`, route restoration, board visibility indexing, and hero non-focusability were not redesigned. No navigation, Search, Discover, Library, production Details, playback, or Smart Playback work was started.
 
 Top-level Discover, Library, Search, and Settings destinations are intentionally deferred until those routes are implemented and wired. No dead navigation controls, fake recommendations, or fake metadata were added. Do not mark all of Phase 3B complete on this milestone.
 

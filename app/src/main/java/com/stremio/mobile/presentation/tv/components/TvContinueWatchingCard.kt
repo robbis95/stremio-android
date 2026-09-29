@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -77,7 +78,7 @@ internal fun TvContinueWatchingCard(
             }
             .clickable(enabled = enabled, onClick = onActivate, indication = null, interactionSource = null)
             .shadow(if (isFocused) 14.dp else 0.dp, shape, clip = false)
-            .background(TvColors.surface, shape)
+            .background(TvColors.mediaSurface, shape)
             .tvFocusTreatment(isFocused, TvDimens.controlRadius)
             .clip(shape),
     ) {
@@ -97,33 +98,38 @@ internal fun TvContinueWatchingCard(
                 Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.Bottom,
             ) {
-                Text(item.name, color = androidx.compose.ui.graphics.Color.White,
+                Text(item.name, color = TvColors.onMedia,
                     style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 metadataLine(item)?.let {
-                    Text(it, color = androidx.compose.ui.graphics.Color(0xFFE8E6E2),
+                    Text(it, color = TvColors.mediaSecondary,
                         style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Spacer(Modifier.height(9.dp))
                 ProgressTrack(item.progress)
             }
         } else {
-            Row(Modifier.fillMaxSize().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(Modifier.fillMaxSize().padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 if (!item.poster.isNullOrBlank()) {
                     AsyncImage(
                         model = item.poster,
                         contentDescription = item.name,
                         contentScale = ContentScale.Fit,
-                        modifier = Modifier.width(76.dp).fillMaxHeight().clip(RoundedCornerShape(6.dp)),
+                        modifier = Modifier.height(132.dp).aspectRatio(2f / 3f)
+                            .clip(RoundedCornerShape(8.dp)),
                     )
                 }
-                Column(Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.Center) {
-                    Text(item.name, color = TvColors.primaryText,
-                        style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    metadataLine(item)?.let {
-                        Text(it, color = TvColors.secondaryText,
-                            style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Column(Modifier.weight(1f).fillMaxHeight()) {
+                    Column(
+                        Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(item.name, color = TvColors.onMedia,
+                            style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        metadataLine(item)?.let {
+                            Text(it, color = TvColors.mediaSecondary,
+                                style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                     }
-                    Spacer(Modifier.weight(1f))
                     ProgressTrack(item.progress)
                 }
             }
@@ -134,7 +140,7 @@ internal fun TvContinueWatchingCard(
 @Composable
 private fun ProgressTrack(progress: Float?) {
     val value = progress?.coerceIn(0f, 1f) ?: 0f
-    Box(Modifier.fillMaxWidth().height(5.dp).background(TvColors.divider, RoundedCornerShape(3.dp))) {
+    Box(Modifier.fillMaxWidth().height(5.dp).background(TvColors.mediaTrack, RoundedCornerShape(3.dp))) {
         Box(Modifier.fillMaxWidth(value).fillMaxHeight().background(TvColors.accent, RoundedCornerShape(3.dp)))
     }
 }

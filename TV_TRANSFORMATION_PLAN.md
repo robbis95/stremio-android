@@ -158,6 +158,7 @@ Implementation details, capability boundaries, and performance rules are maintai
 - `TV_ARCHITECTURE_STRATEGY.md`
 - `TV_CORE_CAPABILITY_AUDIT.md`
 - `TV_SMART_PLAYBACK_FEASIBILITY.md`
+- `TV_PLAYBACK_EXPERIENCE_ROADMAP.md`
 
 Codex tasks should read these before making architecture decisions that touch Stremio Core usage, metadata mapping, search, playback, state ownership, TV Material, loading strategy, or performance.
 
@@ -366,6 +367,8 @@ Do not invent recommendation sources.
 - subtitle settings
 - next episode
 - ExoPlayer/MPV validation
+
+After the ordinary TV playback path is working and instrumented, continue through the staged Playback Experience roadmap in `TV_PLAYBACK_EXPERIENCE_ROADMAP.md`: conservative Core-backed Skip Segments, provider-neutral segment resolution, Smart Play/Fallback, Episode Continuity, Next Episode transaction, and bounded seamless preloading. Do not implement these as unrelated hacks.
 
 Smart Playback is a separate staged playback track documented in `TV_SMART_PLAYBACK_FEASIBILITY.md`.
 

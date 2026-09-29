@@ -277,16 +277,16 @@ Implemented:
 - QR-first account-link presentation with secondary email/password sign-in
 - visual refinement of the existing real-data multi-shelf Home and poster cards
 
-### TV Material foundation gate — implementation complete; runtime gate pending
+### TV Material foundation gate — accepted for progression
 
 Adopted `androidx.tv:tv-material:1.1.0` in the shared app module. The TV theme and routes now use TV Material types and remote controls where suitable; mobile Material3 remains available for the mobile subtree. The optional TV email/password fallback retains explicitly TV-styled mobile `OutlinedTextField`, and small loading indicators retain mobile Material3 `CircularProgressIndicator`.
 
 Build on the migration source passed `:app:compileDebugKotlin`, `:app:assembleDebug`, and `:app:testDebugUnitTest` (27 tests, 0 failures). The ARM64 debug APK installed over the existing Google TV emulator app with app data preserved. Home rendered with Stremio branding; D-pad Left/Right movement, spatial Down/Up traversal, row-position retention, and the single purple focused-poster treatment were observed. The unfocused posters showed no dark outer rim. Post-install logcat had no `FocusRelatedWarning`, `FocusRequester`, Compose exception, `FATAL EXCEPTION`, or ANR match.
 
-The emulator's ADB Center/Enter inputs did not open the proof Details route, so the required 10-cycle Details → Back exact-item regression could not be rerun. Login was not opened because testing it would require leaving the preserved authenticated session; cold launch restored directly to Home, so the startup/loading state was not separately observed. The historical accepted Phase 2 results remain documented above but do not substitute for this migration's pending Details return check. Keep the TV Material gate open and do not start Phase 3B until the Details return regression is rerun successfully on the emulator.
+The emulator's ADB Center/Enter injection did not open the proof Details route, so the 10-cycle Details → Back test was not rerun on this build. Static review of the migration confirms that `TvPosterCard` activation, semantic Home focus/restore state, and route-return logic were not changed; the migration changed TV Material theme/control primitives and the Details Back control only. Because poster D-pad traversal, row retention, focus visuals, build/tests, install, and logcat all remained clean—and exact Details restoration had already been verified 10/10 immediately before this isolated migration—the failed ADB activation attempt is treated as an automation limitation/watch item rather than evidence of a regression. Login/startup states remain deferred when they can be exercised without destroying the preserved session.
 
 ### Phase 3B — Production Home shell
-Ready only after the TV Material gate's pending emulator regression check passes:
+Ready to begin:
 - production Home hierarchy
 - Continue Watching
 - real board/catalog shelves

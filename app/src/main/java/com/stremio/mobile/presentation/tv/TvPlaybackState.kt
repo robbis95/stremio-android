@@ -25,12 +25,18 @@ internal data class TvPlaybackAttempt(
     val sourceKind: StreamSourceKind,
     val providerTitle: String,
     val quality: String?,
+    val proxyHeadersPresent: Boolean,
+    val serverRequired: Boolean,
     val requestedEngine: PlayerEngine,
     val startedAtNanos: Long,
 ) {
     companion object {
         fun create(target: TvStreamTarget, option: StreamOption, engine: PlayerEngine, nowNanos: Long): TvPlaybackAttempt =
-            TvPlaybackAttempt(newTvPlaybackAttemptId(), target, option.semanticKey, option.sourceKind, option.addonTitle, option.quality, engine, nowNanos)
+            TvPlaybackAttempt(
+                newTvPlaybackAttemptId(), target, option.semanticKey, option.sourceKind, option.addonTitle,
+                option.quality, option.core.stream.behaviorHints.proxyHeaders != null,
+                com.stremio.mobile.core.streamRequiresLocalServer(option.core.stream), engine, nowNanos,
+            )
     }
 }
 
@@ -59,6 +65,9 @@ internal data class TvPlaybackUiState(
     val actualEngine: PlayerEngine? = null,
     val error: String? = null,
     val timing: TvPlaybackTiming = TvPlaybackTiming(),
+    val serverStatus: String? = null,
+    val resolutionKind: String? = null,
+    val convertedSourceKind: String? = null,
     val firstVisualObserved: Boolean = false,
     val isBuffering: Boolean = false,
     val runtime: com.stremio.mobile.player.PlayerRuntimeState = com.stremio.mobile.player.PlayerRuntimeState(),
@@ -89,6 +98,9 @@ internal fun safeTvPlaybackTrace(
     actualEngine: PlayerEngine? = null,
     durations: TvPlaybackTiming = TvPlaybackTiming(),
     signalKind: String? = null,
+    server: String? = null,
+    resolution: String? = null,
+    convertedSource: String? = null,
 ): String = buildString {
     append("attempt=").append(attempt.attemptId)
     append(" source=").append(attempt.sourceKind.name)
@@ -96,6 +108,11 @@ internal fun safeTvPlaybackTrace(
     attempt.quality?.let { append(" quality=").append(it.take(32)) }
     append(" requestedEngine=").append(attempt.requestedEngine.name)
     if (actualEngine != null) append(" actualEngine=").append(actualEngine.name)
+    append(" proxyHeaders=").append(if (attempt.proxyHeadersPresent) "yes" else "no")
+    append(" serverRequired=").append(if (attempt.serverRequired) "yes" else "no")
+    server?.let { append(" server=").append(it) }
+    resolution?.let { append(" resolution=").append(it) }
+    convertedSource?.let { append(" convertedSource=").append(it) }
     append(" stage=").append(stage)
     durations.resolutionLatencyMs?.let { append(" resolutionMs=").append(it) }
     durations.playerLoadCallLatencyMs?.let { append(" loadCallMs=").append(it) }

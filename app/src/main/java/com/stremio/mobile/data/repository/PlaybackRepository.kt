@@ -2,6 +2,10 @@ package com.stremio.mobile.data.repository
 
 import android.net.Uri
 import com.stremio.mobile.core.StremioCore
+import com.stremio.mobile.core.PlaybackResolutionException
+import com.stremio.mobile.core.PlaybackResolutionFailure
+import com.stremio.mobile.core.ResolvedPlayableSource
+import com.stremio.mobile.core.coreResolutionTimeoutFailure
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.player.ExternalSubtitle
 import com.stremio.mobile.player.LanguageCatalog
@@ -14,13 +18,19 @@ import com.stremio.mobile.player.PlayerTrackOption
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 
 class PlaybackRepository(
     private val core: StremioCore,
     private val playbackManager: PlaybackManager
 ) {
     enum class PlaybackLoadStage { ResolutionStarted, PlayableSourceResolved, PlayerLoadStarted, PlayerLoadReturned }
-    data class PlaybackLoadEvent(val stage: PlaybackLoadStage, val monotonicNanos: Long)
+    data class PlaybackLoadEvent(
+        val stage: PlaybackLoadStage,
+        val monotonicNanos: Long,
+        val source: ResolvedPlayableSource? = null,
+    )
     val state: StateFlow<PlaybackState> get() = playbackManager.state
 
     fun getPlayer(): Player? = playbackManager.getPlayer()
@@ -43,19 +53,24 @@ class PlaybackRepository(
         onEvent: ((PlaybackLoadEvent) -> Unit)? = null,
     ): Boolean {
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.ResolutionStarted, android.os.SystemClock.elapsedRealtimeNanos()))
-        val resolvedUrl = try {
-            core.resolvePlayableUrl(option.core).first()
+        val resolvedSource = try {
+            withTimeout(CORE_RESOLUTION_TIMEOUT_MS) { core.resolvePlayableUrl(option.core).first() }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            if (cancelled is TimeoutCancellationException) {
+                throw coreResolutionTimeoutFailure()
+            }
             throw cancelled
+        } catch (failure: PlaybackResolutionException) {
+            throw failure
         } catch (_: Exception) {
-            null
+            throw PlaybackResolutionException(PlaybackResolutionFailure.CoreConversionError)
         }
-        val url = resolvedUrl ?: core.directUrl(option.core.stream)
+        val url = resolvedSource.playableUri
 
         if (url.isNullOrBlank()) {
-            return false
+            throw PlaybackResolutionException(PlaybackResolutionFailure.NoPlayableSource)
         }
-        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayableSourceResolved, android.os.SystemClock.elapsedRealtimeNanos()))
+        onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayableSourceResolved, android.os.SystemClock.elapsedRealtimeNanos(), resolvedSource))
 
         val subtitles = option.core.stream.subtitles.map {
             ExternalSubtitle(
@@ -165,5 +180,9 @@ class PlaybackRepository(
 
     fun updateSubtitlePrefs(sizePercent: Int, offsetPercent: Int) {
         runCatching { core.updateSubtitleSettings(sizePercent = sizePercent, offsetPercent = offsetPercent) }
+    }
+
+    companion object {
+        const val CORE_RESOLUTION_TIMEOUT_MS = 15_000L
     }
 }

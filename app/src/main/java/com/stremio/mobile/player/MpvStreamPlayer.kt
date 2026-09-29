@@ -91,7 +91,7 @@ class MpvStreamPlayer(
                         publishState(error = null, ended = true)
                     } else {
                         publishState(error = "Playback failed", ended = false)
-                        playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError("Playback failed"))
+                        playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError("Other"))
                     }
                 }
                 MPVLib.MpvEvent.MPV_EVENT_PLAYBACK_RESTART -> {

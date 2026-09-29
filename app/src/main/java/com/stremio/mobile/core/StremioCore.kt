@@ -1,11 +1,11 @@
 package com.stremio.mobile.core
 
 import android.content.Context
+import com.stremio.mobile.BuildConfig
 import timber.log.Timber
 import com.stremio.core.Core
 import com.stremio.core.Field
 import com.stremio.core.models.Ctx
-import com.stremio.core.models.LoadableConvertedStream
 import com.stremio.core.models.LoadableMetaItem
 import com.stremio.core.models.LoadableStreams
 import com.stremio.core.models.MetaDetails
@@ -38,7 +38,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.transform
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 
@@ -439,25 +439,42 @@ class StremioCore(context: Context) {
 
     /**
      * Loads the Player model for [option] and emits the resolved playable URL once the core has
-     * converted the stream (torrents are routed through the local streaming server). Direct URL
-     * streams are emitted immediately as a fallback.
+     * converted the stream. Core's matching Player.selected and converted Ready stream are the
+     * only accepted playback source; original stream URLs are never emitted here.
      */
-    fun resolvePlayableUrl(option: CoreStream): Flow<String> {
+    fun resolvePlayableUrl(option: CoreStream): Flow<ResolvedPlayableSource> {
         val selected = Player.Selected(
             stream = option.stream,
             streamRequest = option.streamRequest,
             metaRequest = option.metaRequest,
             subtitlesPath = null,
         )
-        return newStateFlow(Field.PLAYER)
-            .map { directUrl(getPlayer().stream) }
-            .onStart {
-                dispatchLoad(ActionLoad.Args.Player(selected), Field.PLAYER)
-                // Direct URL streams need no conversion.
-                directUrl(option.stream)?.let { emit(it) }
+        return callbackFlow {
+            // Register before dispatch. Player conversion may update synchronously inside dispatch.
+            val cb = Core.EventListener { event ->
+                val inner = event.event
+                if (inner is RuntimeEvent.Event.NewState && inner.value.fields.contains(Field.PLAYER)) {
+                    trySend(Unit)
+                }
             }
-            .filter { it != null }
-            .map { it!! }
+            Core.addEventListener(cb)
+            dispatchLoad(ActionLoad.Args.Player(selected), Field.PLAYER)
+            // Inspect after dispatch as well as subscribing first, so a synchronous state update
+            // cannot be missed when Core emits no later asynchronous event.
+            trySend(Unit)
+            awaitClose { Core.removeEventListener(cb) }
+        }.transform {
+            val player = getPlayer()
+            val diagnostics = playerSelectionMatchDiagnostics(player, selected)
+            if (BuildConfig.DEBUG && !diagnostics.matches) {
+                Timber.tag("PlaybackResolution").d(
+                    "player-selection-rejected selected=%s streamMatch=%s streamRequestMatch=%s metaRequestMatch=%s convertedState=%s",
+                    diagnostics.selectedPresent, diagnostics.streamMatches, diagnostics.streamRequestMatches,
+                    diagnostics.metaRequestMatches, diagnostics.convertedState,
+                )
+            }
+            resolvedCoreSource(matchingPlayerStream(player, selected), option.stream)?.let { emit(it) }
+        }
     }
 
     fun getPlayer(): Player = Core.getState(Field.PLAYER)
@@ -535,11 +552,6 @@ class StremioCore(context: Context) {
 
     fun playerNextVideo() {
         dispatch(Action(Action.Type.Player(ActionPlayer(ActionPlayer.Args.NextVideo(pbandk.wkt.Empty())))), Field.PLAYER)
-    }
-
-    private fun directUrl(converted: LoadableConvertedStream?): String? {
-        val content = converted?.content
-        return if (content is LoadableConvertedStream.Content.Ready) directUrl(content.value) else null
     }
 
     /** Best-effort extraction of an ExoPlayer-playable URL from a core [Stream]. */

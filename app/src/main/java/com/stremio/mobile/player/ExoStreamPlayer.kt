@@ -10,6 +10,8 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.decoder.DecoderException
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -28,6 +30,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.Locale
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
+import javax.net.ssl.SSLException
 
 class ExoStreamPlayer(
     context: Context,
@@ -122,7 +128,7 @@ class ExoStreamPlayer(
         override fun onPlayerError(error: PlaybackException) {
             val message = error.message ?: "Playback failed"
             publishState(error = message)
-            playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(message))
+            playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(classifyPlaybackFailure(error)))
         }
 
         override fun onRenderedFirstFrame() {
@@ -472,6 +478,20 @@ class ExoStreamPlayer(
     private fun buildExternalSubtitleLabel(subtitle: ExternalSubtitle): String {
         val base = subtitle.label?.takeIf { it.isNotBlank() } ?: subtitle.lang.uppercase(Locale.ROOT)
         return if (subtitle.source != null) "$base (${subtitle.source})" else base
+    }
+}
+
+internal fun classifyPlaybackFailure(error: Throwable): String {
+    val causes = generateSequence(error) { it.cause }.take(12).toList()
+    return when {
+        causes.any { it is UnknownHostException } -> "DNS"
+        causes.any { it is SocketTimeoutException } -> "ConnectTimeout"
+        causes.any { it is ConnectException } -> "Connect"
+        causes.any { it is SSLException } -> "TLS"
+        causes.any { it is HttpDataSource.InvalidResponseCodeException } -> "HTTPResponseCode"
+        causes.any { it is androidx.media3.exoplayer.source.UnrecognizedInputFormatException } -> "UnsupportedContainer"
+        causes.any { it is DecoderException } -> "Decoder"
+        else -> "Other"
     }
 }
 

@@ -91,7 +91,7 @@ data class PlayerRuntimeState(
 
 sealed interface PlayerPlaybackEvent {
     data class FirstVisualFrame(val signalKind: String) : PlayerPlaybackEvent
-    data class PlaybackError(val message: String) : PlayerPlaybackEvent
+    data class PlaybackError(val category: String) : PlayerPlaybackEvent
 }
 
 /** Small per-player signal gate; reset it whenever a new media load/retry begins. */

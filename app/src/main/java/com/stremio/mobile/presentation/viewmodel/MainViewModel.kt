@@ -13,6 +13,9 @@ import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Event
 import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.core.StremioCore
+import com.stremio.mobile.core.PlaybackResolutionException
+import com.stremio.mobile.core.PlaybackResolutionFailure
+import com.stremio.mobile.core.streamRequiresLocalServer
 import com.stremio.mobile.data.model.*
 import com.stremio.mobile.data.repository.*
 import com.stremio.mobile.player.PlaybackState
@@ -2014,6 +2017,29 @@ class MainViewModel(
                                 auditOptions.count { !it.size.isNullOrBlank() },
                                 incoming.duplicateSemanticKeyCount,
                             )
+                            auditOptions.filter { it.sourceKind == StreamSourceKind.Direct }.forEach { direct ->
+                                val proxyHeaders = direct.core.stream.behaviorHints.proxyHeaders
+                                Timber.tag("TvDirectAudit").d(
+                                    "provider=%s quality=%s proxyHeaders=%s requestHeaderCount=%d responseHeaderCount=%d notWebReady=%s",
+                                    direct.addonTitle.take(80), direct.quality?.take(32) ?: "unknown",
+                                    if (proxyHeaders == null) "no" else "yes",
+                                    proxyHeaders?.request?.size ?: 0,
+                                    proxyHeaders?.response?.size ?: 0,
+                                    direct.notWebReady,
+                                )
+                            }
+                            auditOptions.filter { it.sourceKind == StreamSourceKind.Torrent }.forEach { torrent ->
+                                val source = torrent.core.stream.source as? com.stremio.core.types.resource.Stream.Source.Tramvai
+                                val metadata = source?.value
+                                Timber.tag("TvTorrentAudit").d(
+                                    "provider=%s quality=%s announceCount=%d fileMustIncludeCount=%d fileIdxPresent=%s infoHashPresent=%s",
+                                    torrent.addonTitle.take(80), torrent.quality?.take(32) ?: "unknown",
+                                    metadata?.announce?.size ?: 0,
+                                    metadata?.fileMustInclude?.size ?: 0,
+                                    metadata?.fileIdx != null,
+                                    !metadata?.infoHash.isNullOrBlank(),
+                                )
+                            }
                         }
                     }
                     val current = _tvStreamSelection.value
@@ -2064,6 +2090,7 @@ class MainViewModel(
         playbackRepository.release()
 
         val requestedEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
+        val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
         val selectedState = _tvStreamSelection.value
         if (selectedState.target?.semanticTargetKey == target.semanticTargetKey) {
@@ -2077,11 +2104,34 @@ class MainViewModel(
             timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
         )
         lastTvTimeReportNanos = 0L
-        Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated"))
+        Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated", server = if (serverRequired) "pending" else "not-required"))
 
         tvPlaybackJob = viewModelScope.launch {
             try {
-                if (tvStreamRequiresLocalServer(option)) startServerInternal()
+                if (serverRequired) {
+                    val previous = safeServerState(serverController.state.value)
+                    val startedAt = SystemClock.elapsedRealtimeNanos()
+                    _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "start-started")
+                    Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "server-start-started", server = "start-started previous=$previous"))
+                    try {
+                        startServerInternal()
+                    } catch (_: Exception) {
+                        val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
+                        val resulting = safeServerState(serverController.state.value)
+                        _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "start-failed")
+                        Log.w(
+                            "TvPlaybackTrace",
+                            safeTvPlaybackTrace(attempt, "server-start-failed", server = "start-failed previous=$previous resulting=$resulting startupMs=$elapsedMs reason=${safeServerFailureCategory(serverController.state.value)}"),
+                        )
+                        throw PlaybackResolutionException(PlaybackResolutionFailure.StreamingServerStartFailed)
+                    }
+                    val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
+                    val resulting = safeServerState(serverController.state.value)
+                    _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "ready")
+                    Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "server-ready", server = "ready previous=$previous resulting=$resulting startupMs=$elapsedMs"))
+                } else {
+                    _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "not-required")
+                }
                 playbackRepository.setPlaybackEventListener { event -> onTvPlaybackEvent(attempt, event) }
                 val loaded = playbackRepository.resolveAndLoadStream(
                     option = option,
@@ -2102,12 +2152,14 @@ class MainViewModel(
                                 PlaybackRepository.PlaybackLoadStage.PlayerLoadStarted -> _tvPlayback.value.timing.copy(playerLoadStartedNanos = event.monotonicNanos)
                                 PlaybackRepository.PlaybackLoadStage.PlayerLoadReturned -> _tvPlayback.value.timing.copy(playerLoadReturnedNanos = event.monotonicNanos)
                             },
+                            resolutionKind = event.source?.resolutionKind ?: _tvPlayback.value.resolutionKind,
+                            convertedSourceKind = event.source?.convertedSourceKind ?: _tvPlayback.value.convertedSourceKind,
                         )
                     },
                 )
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@launch
                 if (!loaded) {
-                    failTvPlayback(attempt, "Couldn’t start this source", "resolve")
+                    failTvPlayback(attempt, "Couldn’t start this source", PlaybackResolutionFailure.NoPlayableSource.name)
                     return@launch
                 }
                 val actualEngine = playbackRepository.actualEngine()
@@ -2116,13 +2168,14 @@ class MainViewModel(
                     actualEngine = actualEngine,
                     runtime = playbackRepository.getPlayer()?.runtimeState?.value ?: _tvPlayback.value.runtime,
                 )
-                Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "load-returned", actualEngine, _tvPlayback.value.timing))
+                Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "load-returned", actualEngine, _tvPlayback.value.timing))
                 startTvPlaybackMonitor(attempt)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
-            } catch (_: Exception) {
+            } catch (failure: Exception) {
                 if (isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) {
-                    failTvPlayback(attempt, "Couldn’t start this source", _tvPlayback.value.stage.name.lowercase())
+                    val category = (failure as? PlaybackResolutionException)?.category?.name ?: PlaybackResolutionFailure.PlayerLoadError.name
+                    failTvPlayback(attempt, "Couldn’t start this source", category)
                 }
             }
         }
@@ -2147,10 +2200,34 @@ class MainViewModel(
 
     internal fun tvSeekDurationMs(): Long = profileSettings.value?.seekTimeDuration ?: 10_000L
 
-    private fun tvStreamRequiresLocalServer(option: StreamOption): Boolean {
-        if (option.core.stream.source is com.stremio.core.types.resource.Stream.Source.Tramvai) return true
-        val directUrl = runCatching { core.directUrl(option.core.stream) }.getOrNull()
-        return directUrl?.startsWith(StremioCore.STREAMING_SERVER_BASE) == true
+    private fun safeServerState(state: StreamingServerState): String = when (state) {
+        StreamingServerState.Stopped -> "Stopped"
+        StreamingServerState.Starting -> "Starting"
+        is StreamingServerState.Ready -> "Ready"
+        is StreamingServerState.Failed -> "Failed"
+    }
+
+    private fun safeServerFailureCategory(state: StreamingServerState): String = when (state) {
+        is StreamingServerState.Failed -> if (state.message.contains("reach", ignoreCase = true)) "Unreachable" else "NativeStartFailed"
+        StreamingServerState.Starting -> "StillStarting"
+        StreamingServerState.Stopped -> "DidNotStart"
+        is StreamingServerState.Ready -> "UnexpectedReadyState"
+    }
+
+    private fun traceTvPlayback(
+        attempt: TvPlaybackAttempt,
+        stage: String,
+        actualEngine: PlayerEngine? = null,
+        timing: TvPlaybackTiming = _tvPlayback.value.timing,
+        signal: String? = null,
+    ): String {
+        val state = _tvPlayback.value
+        return safeTvPlaybackTrace(
+            attempt, stage, actualEngine, timing, signal,
+            server = state.serverStatus,
+            resolution = state.resolutionKind,
+            convertedSource = state.convertedSourceKind,
+        )
     }
 
     private fun onTvPlaybackEvent(attempt: TvPlaybackAttempt, event: PlayerPlaybackEvent) {
@@ -2172,9 +2249,9 @@ class MainViewModel(
                     attempt.target.videoId ?: attempt.target.contentId,
                     current.option ?: return,
                 )
-                Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "first-visual", actualEngine, timing, event.signalKind))
+                Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "first-visual", actualEngine, timing, event.signalKind))
             }
-            is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", _tvPlayback.value.stage.name.lowercase())
+            is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", event.category)
         }
     }
 
@@ -2206,7 +2283,7 @@ class MainViewModel(
                         playbackRepository.reportEnded()
                     }
                     _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Ended)
-                    Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "ended", current.actualEngine, current.timing))
+                    Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "ended", current.actualEngine, current.timing))
                 } else if (tvProgressReportingAllowed(current) && runtime.durationMs > 0 &&
                     (lastTvTimeReportNanos == 0L || SystemClock.elapsedRealtimeNanos() - lastTvTimeReportNanos >= 5_000_000_000L)
                 ) {
@@ -2222,7 +2299,7 @@ class MainViewModel(
     private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
         _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
-        Log.w("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
+        Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
     }
 
     internal fun toggleTvPlayback() {
@@ -2258,7 +2335,7 @@ class MainViewModel(
         val state = _tvPlayback.value
         state.attempt?.let { attempt ->
             reportTvFinalProgress(state)
-            Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "closed", state.actualEngine, state.timing))
+            Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "closed", state.actualEngine, state.timing))
         }
         tvPlaybackJob?.cancel()
         tvPlaybackJob = null

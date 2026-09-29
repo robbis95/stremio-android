@@ -157,6 +157,7 @@ Implementation details, capability boundaries, and performance rules are maintai
 
 - `TV_ARCHITECTURE_STRATEGY.md`
 - `TV_CORE_CAPABILITY_AUDIT.md`
+- `TV_SMART_PLAYBACK_FEASIBILITY.md`
 
 Codex tasks should read these before making architecture decisions that touch Stremio Core usage, metadata mapping, search, playback, state ownership, TV Material, loading strategy, or performance.
 
@@ -312,6 +313,17 @@ Do not invent recommendation sources.
 - subtitle settings
 - next episode
 - ExoPlayer/MPV validation
+
+Smart Playback is a separate staged playback track documented in `TV_SMART_PLAYBACK_FEASIBILITY.md`.
+
+Do not implement Smart Play, Smart Fallback, Episode Continuity or Seamless Episodes as one monolithic change. The feasibility audit currently recommends:
+- deterministic stream metadata/parser first
+- explainable local ranking second
+- Smart Play/manual override
+- generalized fallback
+- consume Core's existing bingeGroup/next-video behavior
+- bridge work only where verified necessary
+- persistent Exo playlist/preload work after ordinary playback architecture is stable
 
 ### Phase 7 — Discover and Library
 - Discover

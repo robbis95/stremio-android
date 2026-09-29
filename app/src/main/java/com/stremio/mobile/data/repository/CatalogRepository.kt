@@ -47,6 +47,10 @@ class CatalogRepository(private val core: StremioCore) {
         core.loadDiscover(request)
     }
 
+    fun loadDiscoverNextPage() {
+        core.loadDiscoverNextPage()
+    }
+
     fun loadLibrary(request: com.stremio.core.models.LibraryWithFilters.LibraryRequest) {
         core.loadLibrary(request)
     }

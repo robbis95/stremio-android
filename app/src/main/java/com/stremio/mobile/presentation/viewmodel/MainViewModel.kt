@@ -21,6 +21,12 @@ import com.stremio.mobile.player.PlayerTrackOption
 import com.stremio.mobile.core.theme.AppFont
 import timber.log.Timber
 import com.stremio.mobile.presentation.state.*
+import com.stremio.mobile.presentation.tv.DiscoverPageRequestTracker
+import com.stremio.mobile.presentation.tv.DiscoverSelectableRequest
+import com.stremio.mobile.presentation.tv.TvDiscoverUiState
+import com.stremio.mobile.presentation.tv.preferredDiscoverRequest
+import com.stremio.mobile.presentation.tv.toTvDiscoverUiState
+import com.stremio.mobile.presentation.tv.toTvDiscoverFilterGroups
 import com.stremio.mobile.server.StreamingServerController
 import com.stremio.mobile.server.StreamingServerState
 import com.stremio.mobile.server.formatServerErrorMessage
@@ -114,6 +120,9 @@ class MainViewModel(
     private val discoverCatalogTitle = MutableStateFlow<String?>(null)
     private val discoverCatalog = MutableStateFlow(CatalogShelf(title = "Discover", isLoading = false))
     private val discoverCatalogWithFilters = MutableStateFlow<com.stremio.core.models.CatalogWithFilters?>(null)
+    private val _tvDiscover = MutableStateFlow(TvDiscoverUiState())
+    internal val tvDiscover: StateFlow<TvDiscoverUiState> = _tvDiscover.asStateFlow()
+    private val discoverPageRequests = DiscoverPageRequestTracker()
     private val libraryWithFilters = MutableStateFlow<com.stremio.core.models.LibraryWithFilters?>(null)
     private val isDiscoverSeeAll = MutableStateFlow(false)
     private val profileSettings = MutableStateFlow<com.stremio.core.types.profile.Profile.Settings?>(null)
@@ -983,19 +992,16 @@ class MainViewModel(
                 discoverCatalogWithFilters.value = discover
                 var req = discoverCatalogRequest.value
                 if (req == null) {
-                    val movieType = discover.selectable.types.find { it.type.lowercase() == "movie" }
-                    if (movieType != null) {
-                        req = movieType.request
-                    } else {
-                        req = discover.selected?.request
-                    }
-                    if (req == null && discover.selectable.types.isNotEmpty()) {
-                        req = discover.selectable.types.first().request
-                    }
+                    req = preferredDiscoverRequest(
+                        coreSelectedRequest = discover.selected?.request,
+                        types = discover.selectable.types.map { DiscoverSelectableRequest(it.selected, it.request) },
+                        catalogs = discover.selectable.catalogs.map { DiscoverSelectableRequest(it.selected, it.request) },
+                    )
                     if (req != null) {
                         discoverCatalogRequest.value = req
                         discoverCatalogTitle.value = "Discover"
-                        catalogRepository.loadDiscover(req)
+                        val alreadyCurrent = discover.selected?.request == req && discover.catalog.pages.isNotEmpty()
+                        if (!alreadyCurrent) catalogRepository.loadDiscover(req)
                     }
                 }
 
@@ -1003,11 +1009,29 @@ class MainViewModel(
                 if (currentReq != null && (discover.selected?.request == currentReq)) {
                     val items = catalogRepository.extractDiscoverItems(discover)
                     val isLoading = discover.catalog.pages.any { it.content is com.stremio.core.models.LoadablePage.Content.Loading || it.content == null }
+                    val error = discover.catalog.pages.firstNotNullOfOrNull { page ->
+                        (page.content as? com.stremio.core.models.LoadablePage.Content.Error)?.value?.message
+                    }
                     discoverCatalog.value = CatalogShelf(
                         title = discoverCatalogTitle.value ?: "Discover",
                         items = items,
                         isLoading = isLoading,
+                        error = error,
                         seeAllRequest = currentReq
+                    )
+                }
+                if (currentReq == null || discover.selected?.request == currentReq) {
+                    _tvDiscover.value = discover.toTvDiscoverUiState(
+                        shelf = discoverCatalog.value,
+                        title = discoverCatalogTitle.value ?: "Discover",
+                        selectedRequest = currentReq,
+                    )
+                } else {
+                    _tvDiscover.value = _tvDiscover.value.copy(
+                        selectedRequest = currentReq,
+                        title = discoverCatalogTitle.value ?: "Discover",
+                        shelf = discoverCatalog.value.copy(isLoading = true, seeAllRequest = currentReq),
+                        filterGroups = discover.toTvDiscoverFilterGroups(),
                     )
                 }
             }
@@ -1703,17 +1727,13 @@ class MainViewModel(
             val discover = catalogRepository.getDiscover()
             var req = discoverCatalogRequest.value
             if (req == null) {
-                val movieType = discover.selectable.types.find { it.type.lowercase() == "movie" }
-                if (movieType != null) {
-                    req = movieType.request
-                } else {
-                    req = discover.selected?.request
-                }
-                if (req == null && discover.selectable.types.isNotEmpty()) {
-                    req = discover.selectable.types.first().request
-                }
+                req = preferredDiscoverRequest(
+                    coreSelectedRequest = discover.selected?.request,
+                    types = discover.selectable.types.map { DiscoverSelectableRequest(it.selected, it.request) },
+                    catalogs = discover.selectable.catalogs.map { DiscoverSelectableRequest(it.selected, it.request) },
+                )
             }
-            if (req != null) {
+            if (req != null && discover.selected?.request != req) {
                 discoverCatalogRequest.value = req
                 discoverCatalogTitle.value = "Discover"
                 catalogRepository.loadDiscover(req)
@@ -2125,6 +2145,10 @@ class MainViewModel(
     fun selectDiscoverFilter(request: com.stremio.core.types.addon.ResourceRequest) {
         discoverCatalogRequest.value = request
         discoverCatalog.value = discoverCatalog.value.copy(isLoading = true, seeAllRequest = request)
+        _tvDiscover.value = _tvDiscover.value.copy(
+            selectedRequest = request,
+            shelf = _tvDiscover.value.shelf.copy(isLoading = true, seeAllRequest = request),
+        )
         viewModelScope.launch {
             try {
                 catalogRepository.loadDiscover(request)
@@ -2132,6 +2156,14 @@ class MainViewModel(
                 Timber.e(e, "Failed to load discover request")
             }
         }
+    }
+
+    fun loadDiscoverNextPage(requestIdentity: String) {
+        val current = _tvDiscover.value
+        val nextRequest = current.nextPageRequest ?: return
+        if (current.selectedRequest == null || nextRequest.toString() != requestIdentity) return
+        if (!discoverPageRequests.tryMark(requestIdentity)) return
+        catalogRepository.loadDiscoverNextPage()
     }
 
     private fun observeAddonSubtitlesForPlayback() {

@@ -51,11 +51,13 @@ class TvSearchPolicyTest {
 
     @Test fun routeOriginRestoresBothHomeAndSearchDetails() {
         assertEquals(TvRoute.Home, TvRouteState(TvRoute.Home).openDetails().closeDetails().route)
+        assertEquals(TvRoute.Discover, TvRouteState(TvRoute.Discover).openDetails().closeDetails().route)
         assertEquals(TvRoute.Search, TvRouteState(TvRoute.Search).openDetails().closeDetails().route)
     }
 
     @Test fun onlyWiredTopLevelDestinationsAreExposed() {
-        assertEquals(listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Search), tvTopLevelDestinations)
+        assertEquals(listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Discover, TvTopLevelRoute.Search), tvTopLevelDestinations)
+        assertEquals(TvRoute.Discover, TvRouteState(TvRoute.Home).select(TvTopLevelRoute.Discover).route)
         assertEquals(TvRoute.Search, TvRouteState(TvRoute.Home).select(TvTopLevelRoute.Search).route)
     }
 }

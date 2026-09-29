@@ -334,7 +334,7 @@ Runtime results:
 
 Scope confirmation: focus registry, semantic keys, spatial traversal policy, row-position memory, `detailsReturnTarget`, route restoration, board visibility indexing, and hero non-focusability were not redesigned. No navigation, Search, Discover, Library, production Details, playback, or Smart Playback work was started.
 
-Top-level Discover, Library, Search, and Settings destinations are intentionally deferred until those routes are implemented and wired. No dead navigation controls, fake recommendations, or fake metadata were added. Do not mark all of Phase 3B complete on this milestone.
+At this milestone, top-level Discover, Library, Search, and Settings destinations were intentionally deferred. No dead navigation controls, fake recommendations, or fake metadata were added. Do not mark all of Phase 3B complete on this milestone.
 
 Do not invent recommendation sources.
 
@@ -379,12 +379,9 @@ Do not implement Smart Play, Smart Fallback, Episode Continuity or Seamless Epis
 - persistent Exo playlist/preload work after ordinary playback architecture is stable
 
 ### Phase 7 — Discover and Library
-- Discover
-- real supported filters
-- Library
-- focus restoration
-- pagination/loading/error handling
-- top-level nav integration
+- Discover production route is recorded in Phase 4B below
+- Library remains unimplemented
+- future Library work must use real Core state and actions
 
 ### Phase 8 — Addons, account, settings
 - addon management
@@ -410,7 +407,7 @@ Do not implement Smart Play, Smart Fallback, Episode Continuity or Seamless Epis
 
 ## Phase 4A — TV Search + first real top-level navigation
 
-Status: implemented on `feat/android-tv`; production verification is bounded to the runtime checks recorded below. The only top-level destinations exposed are Home and Search. Discover, Library, Settings, Addons, and account destinations remain unwired and hidden.
+Status: implemented on `feat/android-tv`; production verification is bounded to the runtime checks recorded below. At Phase 4A the only top-level destinations exposed were Home and Search. Phase 4B adds the real Discover route; Library, Settings, Addons, and account destinations remain unwired and hidden.
 
 - Search uses the existing addon-aware Core `Field.SEARCH` path through `MainViewModel.search(...)`, `CatalogRepository.search(...)`, and `StremioCore.search(...)`. It does not call addon endpoints from UI code, assume Cinemeta, or create a local index.
 - The TV route shell is a small state machine with Login, Home, Search, and Details. Details stores Home or Search as its explicit origin. Home and Search remain composed while switching between them so their independent lazy-row scroll/focus state survives the app session.
@@ -425,7 +422,25 @@ The 142 dp Home hero and normal poster sizing were preserved. A late catalog emi
 
 ### Remaining candidate top-level destinations
 
-Add Discover, Library, Addons, or Settings only alongside working routes and their real state/actions. Movies/Series may be Discover filters rather than permanent destinations. Do not expose placeholders in navigation.
+Add Library, Addons, or Settings only alongside working routes and their real state/actions. Movies/Series may be Discover filters rather than permanent destinations. Do not expose placeholders in navigation.
+
+## Phase 4B — Production TV Discover
+
+Status: implemented, unit-tested, built, installed, and exercised on the existing Google TV ARM64 emulator at 960×540 dp. The app remained on `feat/android-tv`; the `stremio-core-kotlin` submodule was not modified.
+
+- Discover uses the existing Core `CatalogWithFilters` state through `MainViewModel` and `CatalogRepository`; TV UI never calls add-on catalog endpoints. `TvApp` collects a narrow immutable `TvDiscoverUiState` flow with only the mapped filter groups, selected/resolved request, `CatalogShelf`, title, and Core next-page request.
+- Removed the shared mobile ViewModel's hard-coded `movie` preference. Initial selection is protocol-driven: Core selected request, selected type, selected catalog, first type, first catalog, then null. Every navigation uses a `ResourceRequest` supplied by Core.
+- Filters are mapped generically from available types, catalogs, and named extras. Empty groups are omitted; unknown type names are humanized without being filtered out; add-on catalog names are preserved. Options use Core-provided requests. The current runtime account exposed Movie, Series, Channel; add-on catalogs including Popular, New, Featured, Top Picks for You, Because you watched…, and the Channel catalog Audio Book Torrents; and the Genre extra. No fixed movie catalog/add-on is assumed.
+- Discover uses the existing `TvPosterCard` contract in a five-column `LazyVerticalGrid`, with 144 dp posters and 72 dp safe horizontal margins. D-pad routing is explicit: adjacent horizontal items, same/nearest column vertically, deterministic row edges, first grid row Up into the last filter (or nav when filters are absent), and filter Down into the grid.
+- Discover has its own saveable focus memory: semantic `type:id`, fallback index, filter group/option identity, grid first-visible item/offset, and pagination trigger state. The grid is composed only on the active Discover route, so route changes retain explicit state without keeping an offscreen grid alive. Details stores Discover as an explicit exhaustive origin and returns to the same semantic card when still present.
+- Added the app-side `StremioCore.loadDiscoverNextPage()` wrapper using the generated `ActionCatalogWithFilters.LoadNextPage` constructor and `Field.DISCOVER`, then delegated through repository and ViewModel. The route triggers only when the user-focused item enters the last loaded row; the trigger must advance to a later focused index and Core's next-page request identity is de-duplicated. Page results append without replacing or reordering existing items.
+- The top navigation is now exactly Home, Discover, Search, in that order. Discover Back returns Home; top-level switching is not a stack.
+
+Runtime results on the final APK: initial Core selection was Movie/Popular with Movie, Series, and Channel available; Movie and Series results were observed, and Channel returned real audiobook catalog content. The account exposed a Genre extra (including options such as Animation); no other extra group was observed. Catalog and extra selections changed content through Core. The five-column grid navigated across multiple rows. Discover → Details → Back returned to the same semantic item after several rows; repeated earlier runtime checks covered five distinct item cycles. Discover → Home → Discover retained the selected Series/Featured/Genre state and the grid data; nav focus remained on Discover until Down restored Discover focus. Search route/keyboard and live WW search results worked; Home Details return worked. A final Channel pagination run appended another page while the same Backwater Flats item remained focused and visible item order stayed stable. The final app-data-preserving APK install succeeded. Logcat had no focus warning, FocusRequester warning, application AndroidRuntime exception, fatal exception, Compose exception, or ANR; normal Android `monkey` process startup messages were the only AndroidRuntime-pattern matches.
+
+The previous Phase 3B late Home catalog emission remains a watch item: this phase observed Home returning with existing content and focus, but did not stage a controlled late Home emission. Runtime screenshots from this phase are outside Git at `/private/tmp/stremio-android-tv-phase4b-final/`.
+
+Library is not complete. Remaining browse-route work is Library plus later browse refinements such as explicit-request Discover entry/See All if scheduled; do not start Library, Settings, playback, episodes, or Smart Playback as part of Phase 4B.
 
 ## Runtime verification gates
 
@@ -494,19 +509,8 @@ Before commit:
 
 ## Current next gate
 
-Phase 2 is accepted for progression at `b299bef787f892eb269b5c1b44465b2f7f2feb7d` after spatial Up/Down navigation, row-position retention, focus-rim cleanup, 10/10 exact Details return, successful build/tests, clean logcat, and idle stability on the Google TV ARM64 emulator.
+Phase 4B production TV Discover is implemented, tested, built, and runtime-reviewed above. The shell now has real Home, Discover, and Search destinations. Library remains unimplemented and must not appear as a placeholder. Continue with future browse, Details/episode/stream, or playback milestones only as separately scoped work; Smart Playback remains its own staged track.
 
-The historical focus warning remains a watch item because it has not reproduced. A newly arriving real catalog emission should continue to be observed during normal future testing, but neither item blocks the next phase.
+The Phase 3B late Home catalog emission remains a watch item. This phase did not stage a controlled late Home emission, and the historical focus warning remains a watch item because it has not reproduced. Continue observing normal asynchronous catalog arrivals in future runtime checks.
 
-Before Phase 3B expands the TV component surface, perform a controlled TV-only migration/audit toward `androidx.tv:tv-material`, preserving the custom semantic focus/restoration architecture.
-
-Safe bounded work that may proceed:
-- preserve currently discarded Core preview metadata in Android presentation models, with mapper tests
-- preserve episode progress/overview/upcoming metadata needed by future TV episode UI
-- preserve stream behavior hints needed for later binge-compatible stream selection
-- reduce TV dependency on the monolithic `MainUiState` through narrow state slices without changing focus behavior
-- audit and stage a TV-only migration toward `androidx.tv:tv-material` without replacing the custom Phase 2 focus restoration model
-- document/prepare LocalSearch and search-history bridge work without inventing duplicate TV-only backend state
-- prepare performance benchmark/Baseline Profile infrastructure once stable test journeys exist
-
-Phase 3A and the controlled TV Material migration/audit are complete. Phase 3B-A production Home content is implemented above. Continue Phase 3 only when ready to implement real top-level destinations and the later Details, stream selection, and playback work; do not present unwired destinations as navigation.
+Safe follow-up work includes Core metadata preservation needed by real Details/episodes/streams, targeted LocalSearch/search-history bridge completion, and benchmark/Baseline Profile infrastructure when stable journeys are selected. Preserve the semantic TV focus/restoration architecture during those changes.

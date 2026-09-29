@@ -21,6 +21,8 @@ import com.stremio.core.types.resource.Video
 import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Action
 import com.stremio.core.runtime.msg.ActionCtx
+import com.stremio.core.runtime.msg.ActionCatalogWithFilters
+import pbandk.wkt.Empty
 import com.stremio.core.runtime.msg.ActionLoad
 import com.stremio.core.runtime.msg.ActionPlayer
 import com.stremio.core.types.addon.ExtraValue
@@ -228,6 +230,15 @@ class StremioCore(context: Context) {
     fun loadDiscover(request: ResourceRequest) {
         val selected = CatalogWithFilters.Selected(request = request)
         dispatchLoad(ActionLoad.Args.CatalogWithFilters(selected), Field.DISCOVER)
+    }
+
+    fun loadDiscoverNextPage() {
+        val action = Action(
+            Action.Type.CatalogWithFilters(
+                ActionCatalogWithFilters(ActionCatalogWithFilters.Args.LoadNextPage(Empty.defaultInstance)),
+            ),
+        )
+        dispatch(action, Field.DISCOVER)
     }
 
     // endregion

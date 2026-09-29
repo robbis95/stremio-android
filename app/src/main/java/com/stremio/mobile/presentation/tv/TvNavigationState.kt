@@ -3,29 +3,32 @@ package com.stremio.mobile.presentation.tv
 import com.stremio.mobile.data.model.CatalogShelf
 import com.stremio.mobile.presentation.tv.focus.shelfFocusKeys
 
-internal enum class TvRoute { Login, Home, Search, Details }
+internal enum class TvRoute { Login, Home, Discover, Search, Details }
 
-internal enum class TvTopLevelRoute { Home, Search }
+internal enum class TvTopLevelRoute { Home, Discover, Search }
 
 internal data class TvRouteState(
     val route: TvRoute,
     val detailsOrigin: TvTopLevelRoute? = null,
 )
 
-internal val tvTopLevelDestinations = listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Search)
+internal val tvTopLevelDestinations = listOf(TvTopLevelRoute.Home, TvTopLevelRoute.Discover, TvTopLevelRoute.Search)
 
 internal fun TvRouteState.openDetails(): TvRouteState {
     val origin = when (route) {
         TvRoute.Home -> TvTopLevelRoute.Home
+        TvRoute.Discover -> TvTopLevelRoute.Discover
         TvRoute.Search -> TvTopLevelRoute.Search
-        else -> detailsOrigin ?: TvTopLevelRoute.Home
+        TvRoute.Details -> checkNotNull(detailsOrigin) { "Details route is missing its explicit origin" }
+        TvRoute.Login -> error("Details can only be opened from a top-level content route")
     }
     return TvRouteState(TvRoute.Details, origin)
 }
 
 internal fun TvRouteState.closeDetails(): TvRouteState = TvRouteState(
-    route = when (detailsOrigin ?: TvTopLevelRoute.Home) {
+    route = when (checkNotNull(detailsOrigin) { "Details route is missing its explicit origin" }) {
         TvTopLevelRoute.Home -> TvRoute.Home
+        TvTopLevelRoute.Discover -> TvRoute.Discover
         TvTopLevelRoute.Search -> TvRoute.Search
     },
 )
@@ -33,6 +36,7 @@ internal fun TvRouteState.closeDetails(): TvRouteState = TvRouteState(
 internal fun TvRouteState.select(destination: TvTopLevelRoute): TvRouteState = TvRouteState(
     route = when (destination) {
         TvTopLevelRoute.Home -> TvRoute.Home
+        TvTopLevelRoute.Discover -> TvRoute.Discover
         TvTopLevelRoute.Search -> TvRoute.Search
     },
 )

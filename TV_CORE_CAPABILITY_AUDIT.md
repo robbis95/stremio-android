@@ -151,10 +151,14 @@ Current generated `MetaItemPreview` exposes:
 - watched
 - in-cinema
 
-Current BoardRepository maps only a subset into CatalogItem.
+Android `CatalogItem` now preserves the rich preview fields, including
+`defaultVideoId`, `featuredVideoId`, and `hasScheduledVideos` through a stable
+app-domain behavior-hints model. The AddToLibrary mapper carries those values
+back into Core. Its deep-links value remains empty because that action has no
+request context from which to derive Core deep links.
 
-Recommendation:
-- preserve these fields before building the production Home hero
+Use the already-loaded preview fields for the Home hero before requesting
+`MetaDetails` on focus.
 
 This is a direct speed optimization because Home can react from loaded preview state without requesting MetaDetails on focus.
 

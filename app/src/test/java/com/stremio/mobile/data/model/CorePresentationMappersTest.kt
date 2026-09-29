@@ -34,6 +34,11 @@ class CorePresentationMappersTest {
             inLibrary = true,
             watched = true,
             inCinema = true,
+            behaviorHints = MetaItemBehaviorHints(
+                defaultVideoId = "episode-default",
+                featuredVideoId = "episode-featured",
+                hasScheduledVideos = true,
+            ),
         ).toCatalogItem()
 
         assertEquals("logo.png", item.logo)
@@ -48,6 +53,9 @@ class CorePresentationMappersTest {
         assertEquals("background.jpg", item.background)
         assertEquals("2024", item.releaseInfo)
         assertEquals(CoreTimestamp(1_700_000_000L, 123_456_789), item.released)
+        assertEquals("episode-default", item.behaviorHints.defaultVideoId)
+        assertEquals("episode-featured", item.behaviorHints.featuredVideoId)
+        assertTrue(item.behaviorHints.hasScheduledVideos)
     }
 
     @Test
@@ -65,6 +73,70 @@ class CorePresentationMappersTest {
         assertEquals(CatalogPosterShape.Poster, item.posterShape)
         assertFalse(item.watched)
         assertFalse(item.inCinema)
+    }
+
+    @Test
+    fun `catalog item maps back to core preview with rich metadata and behavior hints`() {
+        val item = preview(
+            posterShape = PosterShape.SQUARE,
+            poster = "poster.jpg",
+            background = "background.jpg",
+            logo = "logo.png",
+            description = "A description",
+            releaseInfo = "2024",
+            runtime = "1h 42m",
+            released = pbandk.wkt.Timestamp(seconds = 1_700_000_000L, nanos = 123_456_789),
+            links = listOf(com.stremio.core.types.resource.LinkPreview("Drama", "genre")),
+            watched = true,
+            inCinema = true,
+            behaviorHints = MetaItemBehaviorHints(
+                defaultVideoId = "episode-default",
+                featuredVideoId = "episode-featured",
+                hasScheduledVideos = true,
+            ),
+        ).toCatalogItem().toCoreMetaItemPreviewForLibrary()
+
+        assertEquals(PosterShape.SQUARE, item.posterShape)
+        assertEquals("poster.jpg", item.poster)
+        assertEquals("background.jpg", item.background)
+        assertEquals("logo.png", item.logo)
+        assertEquals("A description", item.description)
+        assertEquals("2024", item.releaseInfo)
+        assertEquals("1h 42m", item.runtime)
+        assertEquals(pbandk.wkt.Timestamp(seconds = 1_700_000_000L, nanos = 123_456_789), item.released)
+        assertEquals(listOf(com.stremio.core.types.resource.LinkPreview("Drama", "genre")), item.links)
+        assertEquals("episode-default", item.behaviorHints.defaultVideoId)
+        assertEquals("episode-featured", item.behaviorHints.featuredVideoId)
+        assertTrue(item.behaviorHints.hasScheduledVideos)
+        assertTrue(item.watched)
+        assertTrue(item.inCinema)
+        assertTrue(item.inLibrary)
+    }
+
+    @Test
+    fun `preview catalog item core round trip preserves behavior hints`() {
+        val originalHints = MetaItemBehaviorHints(
+            defaultVideoId = "default-id",
+            featuredVideoId = "featured-id",
+            hasScheduledVideos = true,
+        )
+        val roundTripped = preview(behaviorHints = originalHints)
+            .toCatalogItem()
+            .toCoreMetaItemPreviewForLibrary()
+
+        assertEquals(originalHints.defaultVideoId, roundTripped.behaviorHints.defaultVideoId)
+        assertEquals(originalHints.featuredVideoId, roundTripped.behaviorHints.featuredVideoId)
+        assertEquals(originalHints.hasScheduledVideos, roundTripped.behaviorHints.hasScheduledVideos)
+    }
+
+    @Test
+    fun `manually created catalog item maps to safe behavior hint defaults`() {
+        val preview = CatalogItem("id", "series", "Example", null, null, null, null)
+            .toCoreMetaItemPreviewForLibrary()
+
+        assertNull(preview.behaviorHints.defaultVideoId)
+        assertNull(preview.behaviorHints.featuredVideoId)
+        assertFalse(preview.behaviorHints.hasScheduledVideos)
     }
 
     @Test
@@ -133,6 +205,7 @@ class CorePresentationMappersTest {
         inLibrary: Boolean = false,
         watched: Boolean = false,
         inCinema: Boolean = false,
+        behaviorHints: MetaItemBehaviorHints = MetaItemBehaviorHints(hasScheduledVideos = false),
     ) = MetaItemPreview(
         id = "tt123",
         type = "movie",
@@ -146,7 +219,7 @@ class CorePresentationMappersTest {
         runtime = runtime,
         released = released,
         links = links,
-        behaviorHints = MetaItemBehaviorHints(hasScheduledVideos = false),
+        behaviorHints = behaviorHints,
         deepLinks = MetaItemDeepLinks(),
         inLibrary = inLibrary,
         watched = watched,

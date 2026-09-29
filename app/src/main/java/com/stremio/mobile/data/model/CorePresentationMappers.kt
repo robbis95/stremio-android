@@ -27,7 +27,44 @@ fun com.stremio.core.types.resource.MetaItemPreview.toCatalogItem(
     released = released?.toCoreTimestamp(),
     links = links.map { CatalogLink(name = it.name, category = it.category) },
     inLibrary = inLibrary,
+    behaviorHints = CatalogBehaviorHints(
+        defaultVideoId = behaviorHints.defaultVideoId,
+        featuredVideoId = behaviorHints.featuredVideoId,
+        hasScheduledVideos = behaviorHints.hasScheduledVideos,
+    ),
 )
+
+fun CatalogItem.toCoreMetaItemPreviewForLibrary(): com.stremio.core.types.resource.MetaItemPreview =
+    com.stremio.core.types.resource.MetaItemPreview(
+        id = id,
+        type = type,
+        name = name,
+        posterShape = when (posterShape) {
+            CatalogPosterShape.Landscape -> com.stremio.core.types.resource.PosterShape.LANDSCAPE
+            CatalogPosterShape.Square -> com.stremio.core.types.resource.PosterShape.SQUARE
+            else -> com.stremio.core.types.resource.PosterShape.POSTER
+        },
+        poster = poster,
+        background = background,
+        logo = logo,
+        description = description,
+        releaseInfo = releaseInfo,
+        runtime = runtime,
+        released = released?.let { pbandk.wkt.Timestamp(seconds = it.seconds, nanos = it.nanos) },
+        links = links.map { link ->
+            com.stremio.core.types.resource.LinkPreview(name = link.name, category = link.category)
+        },
+        behaviorHints = com.stremio.core.types.resource.MetaItemBehaviorHints(
+            defaultVideoId = behaviorHints.defaultVideoId,
+            featuredVideoId = behaviorHints.featuredVideoId,
+            hasScheduledVideos = behaviorHints.hasScheduledVideos,
+        ),
+        // AddToLibrary has no request-scoped deep-link data; retain the existing empty fallback.
+        deepLinks = com.stremio.core.types.resource.MetaItemDeepLinks(),
+        inLibrary = true,
+        watched = watched,
+        inCinema = inCinema,
+    )
 
 fun com.stremio.core.types.resource.Video.toEpisodeOption(
     season: Int,

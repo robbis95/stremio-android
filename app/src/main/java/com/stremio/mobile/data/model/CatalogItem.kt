@@ -21,11 +21,18 @@ data class CatalogItem(
     val released: CoreTimestamp? = null,
     val links: List<CatalogLink> = emptyList(),
     val inLibrary: Boolean? = null,
+    val behaviorHints: CatalogBehaviorHints = CatalogBehaviorHints(),
 )
 
 enum class CatalogPosterShape { Poster, Landscape, Square }
 
 data class CatalogLink(val name: String, val category: String)
+
+data class CatalogBehaviorHints(
+    val defaultVideoId: String? = null,
+    val featuredVideoId: String? = null,
+    val hasScheduledVideos: Boolean = false,
+)
 
 /** Exact protobuf timestamp components, without timezone or precision loss. */
 data class CoreTimestamp(val seconds: Long, val nanos: Int)

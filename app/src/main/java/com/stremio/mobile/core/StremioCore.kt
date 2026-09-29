@@ -16,6 +16,7 @@ import com.stremio.core.models.ContinueWatchingPreview
 import com.stremio.core.models.LoadablePage
 import com.stremio.core.models.LibraryWithFilters
 import com.stremio.mobile.data.model.CatalogItem
+import com.stremio.mobile.data.model.toCoreMetaItemPreviewForLibrary
 import com.stremio.core.types.resource.Video
 import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Action
@@ -284,31 +285,7 @@ class StremioCore(context: Context) {
     }
 
     fun addToLibrary(item: CatalogItem) {
-        val preview = com.stremio.core.types.resource.MetaItemPreview(
-            id = item.id,
-            type = item.type,
-            name = item.name,
-            posterShape = when (item.posterShape) {
-                com.stremio.mobile.data.model.CatalogPosterShape.Landscape -> com.stremio.core.types.resource.PosterShape.LANDSCAPE
-                com.stremio.mobile.data.model.CatalogPosterShape.Square -> com.stremio.core.types.resource.PosterShape.SQUARE
-                else -> com.stremio.core.types.resource.PosterShape.POSTER
-            },
-            poster = item.poster,
-            background = item.background,
-            logo = item.logo,
-            description = item.description,
-            releaseInfo = item.releaseInfo,
-            runtime = item.runtime,
-            released = item.released?.let { pbandk.wkt.Timestamp(seconds = it.seconds, nanos = it.nanos) },
-            links = item.links.map { link ->
-                com.stremio.core.types.resource.LinkPreview(name = link.name, category = link.category)
-            },
-            behaviorHints = com.stremio.core.types.resource.MetaItemBehaviorHints(hasScheduledVideos = false),
-            deepLinks = com.stremio.core.types.resource.MetaItemDeepLinks(),
-            inLibrary = true,
-            watched = item.watched,
-            inCinema = item.inCinema
-        )
+        val preview = item.toCoreMetaItemPreviewForLibrary()
         val action = Action(Action.Type.Ctx(ActionCtx(ActionCtx.Args.AddToLibrary(preview))))
         dispatch(action, Field.CTX)
     }

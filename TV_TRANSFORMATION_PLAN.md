@@ -240,18 +240,19 @@ Verified:
 - Java 21 build works
 - `compileDebugKotlin` passes
 - `assembleDebug` passes
-- `testDebugUnitTest` passes (19 tests, 0 failures)
+- `testDebugUnitTest` passes (21 tests, 0 failures)
 - fresh universal APK installs successfully on Google TV ARM64 emulator
 - `TvActivity` launches and remains resumed
 - basic D-pad smoke input does not crash
-- no fatal/ANR/Compose/FocusRequester crash markers observed in smoke logcat
+- the Details return-focus regression reproduced from the emulator recording is fixed: 10/10 Home → Details → Back cycles returned focus to the exact same semantic item on the first Home frame, including items farther right in the shelf
+- Details paints an opaque TV background; title/body contrast and visible Back focus were confirmed on emulator
+- no AndroidRuntime/FATAL or ANR was observed during the regression run; logcat did emit 16 non-fatal `FocusRelatedWarning` messages saying a `FocusRequester` was not initialized
 
 Still required:
-- manual emulator stress test of D-pad behavior
-- exact per-shelf focus-memory verification
-- repeated Home → Details → Back restoration
+- investigate the non-fatal `FocusRelatedWarning` messages
+- manual multi-shelf Up/Down and exact per-shelf focus-memory stress verification
 - validate real catalog emissions do not steal focus
-- visual review of Phase 3A at TV viewing distance
+- visual review of the complete Phase 3A experience at TV viewing distance
 
 ### Phase 3A — TV visual foundation
 Status: implemented in source; Phase 2 runtime stress verification is still pending.
@@ -414,7 +415,7 @@ Before commit:
 
 Before Phase 3B, Phase 2 must pass the remaining manual Google TV stress gate.
 
-Build/runtime smoke verification is complete as of commit `5d8b246f468456052a19095648bb236ea596d39e`.
+The focused Details return-fix runtime verification is recorded at source commit `ac303e8fa4ad38bafcf6f1b059c9a8c0fe4afd83`. The complete Phase 2 manual gate remains open.
 
 Do not start Phase 3B until the manual focus/navigation and visual review is completed.
 

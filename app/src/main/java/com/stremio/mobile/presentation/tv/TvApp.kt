@@ -25,6 +25,7 @@ private enum class TvRoute { Login, Home, Details }
 internal fun TvApp(viewModel: MainViewModel) {
     val account by viewModel.tvAccount.collectAsStateWithLifecycle()
     val boardShelves by viewModel.tvBoardShelves.collectAsStateWithLifecycle()
+    val continueWatching by viewModel.tvContinueWatching.collectAsStateWithLifecycle()
     val selectedDetails by viewModel.tvSelectedDetails.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
@@ -87,6 +88,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                 )
                 else -> {
                     TvHomeScreen(
+                        continueWatching = continueWatching,
                         shelves = boardShelves,
                         isBoardLoading = isBoardLoading,
                         isActive = route == TvRoute.Home,
@@ -97,6 +99,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                             viewModel.openDetails(item)
                             routeName = TvRoute.Details.name
                         },
+                        onBoardShelfVisible = viewModel::onShelfVisible,
                     )
                     if (route == TvRoute.Details) {
                         TvDetailsScreen(

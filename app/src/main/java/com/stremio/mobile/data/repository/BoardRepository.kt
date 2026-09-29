@@ -40,19 +40,8 @@ class BoardRepository(private val core: StremioCore) {
                     is com.stremio.core.models.LoadablePage.Content.Error -> content.value.message
                     else -> null
                 }
-                val rawTitle = page.catalogName ?: page.title
-                val typeSuffix = when (page.catalogType) {
-                    "movie" -> "Movies"
-                    "series" -> "Series"
-                    else -> ""
-                }
-                val title = if (typeSuffix.isNotEmpty() && (rawTitle.equals("Popular", ignoreCase = true) || rawTitle.equals("Featured", ignoreCase = true))) {
-                    "$rawTitle $typeSuffix"
-                } else {
-                    rawTitle
-                }
                 CatalogShelf(
-                    title = title,
+                    title = page.catalogName ?: page.title,
                     items = items,
                     isLoading = page.content is com.stremio.core.models.LoadablePage.Content.Loading || page.content == null,
                     error = error,
@@ -74,7 +63,7 @@ class BoardRepository(private val core: StremioCore) {
                 name = item.name,
                 poster = item.poster,
                 background = null,
-                releaseInfo = item.state.videoId?.let { "Episode" },
+                releaseInfo = null,
                 imdbRating = null,
                 progress = progressVal,
                 watched = item.watched,

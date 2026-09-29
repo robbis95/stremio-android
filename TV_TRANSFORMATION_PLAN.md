@@ -285,14 +285,30 @@ Build on the migration source passed `:app:compileDebugKotlin`, `:app:assembleDe
 
 The emulator's ADB Center/Enter injection did not open the proof Details route, so the 10-cycle Details → Back test was not rerun on this build. Static review of the migration confirms that `TvPosterCard` activation, semantic Home focus/restore state, and route-return logic were not changed; the migration changed TV Material theme/control primitives and the Details Back control only. Because poster D-pad traversal, row retention, focus visuals, build/tests, install, and logcat all remained clean—and exact Details restoration had already been verified 10/10 immediately before this isolated migration—the failed ADB activation attempt is treated as an automation limitation/watch item rather than evidence of a regression. Login/startup states remain deferred when they can be exercised without destroying the preserved session.
 
-### Phase 3B — Production Home shell
-Ready to begin:
-- production Home hierarchy
-- Continue Watching
-- real board/catalog shelves
-- top-level TV navigation shell
-- optional real-data hero
-- Stremio branding
+### Phase 3B-A — Production Home content shell
+Status: implemented, unit-tested, built, installed, and exercised on the Google TV ARM64 emulator. This milestone covers the real-data Home content shell. The Phase 3B top-level navigation shell remains deferred until its destinations are implemented and wired.
+
+Implemented:
+- a single scrolling Home feed with Stremio identity in a compact, non-focusable hero, Continue Watching when non-empty, then the original addon board shelves in their existing order and with their real titles
+- a real preview-driven hero using only current `CatalogItem` presentation data; it shows the real logo or title, available metadata/description, and real background artwork when present, with a contained-poster fallback rather than stretching portrait artwork
+- a 150 ms visual-only hero dwell; D-pad focus and semantic focus memory remain immediate, and focus changes do not call `openDetails`, `getMetaDetailsFlow`, or another metadata endpoint
+- a dedicated landscape Continue Watching card with real progress and deliberate Details activation; background/landscape art fills the card, while portrait/square art remains contained on a neutral surface
+- pure local Continue Watching enrichment by matching `type + id` against loaded board items. It fills missing presentation fields while preserving progress, watched state, remaining episodes, continue-watching video ID, and the Continue Watching marker. A no-match item remains valid without fabricated fields
+- an immutable TV Home presentation structure that separates the non-focusable hero, optional stable `tv:continue-watching` shelf, and board shelves. Semantic shelf keys map explicitly to LazyColumn indices; original board indices remain distinct from presentation and lazy indices
+- bounded board visibility prefetch through `onShelfVisible(originalBoardShelfIndex)`, de-duplicated as shelves become visible/near-visible. Hero and Continue Watching do not shift the index sent to `MainViewModel`
+- restrained non-focusable loading/error presentation. One catalog error remained isolated to its shelf while ready shelves stayed navigable
+- initial focus waits for real focusable content or completed loading, so empty/loading board emissions do not create a fake focus target
+
+Runtime results:
+- the 960×540 dp Google TV ARM64 emulator displayed real Continue Watching first when populated, followed by real board content; the hero was tuned to a 128 dp section after observing the actual viewport
+- rapid horizontal navigation across eight cards remained responsive; the preview settled on the final focused real item. Static call-path review and filtered runtime logs showed no focus-triggered MetaDetails request
+- Continue Watching progress rendered from the real item state; board row position remained retained across vertical traversal, including a far-right item
+- Continue Watching Details activation and Back restored the exact focused CW card. Board Details activation and Back also restored the exact focused item, including a far-right board item across repeated cycles
+- visibility callbacks loaded only the current and nearby board catalogs at original indices 3, 4, and 5 during traversal. A late shelf error arrived in the test window and was isolated. A successful late catalog population while focus was active was not confirmed, so the asynchronous successful-emission check remains open
+- a 30-second idle interval on Home retained the visible focus and scroll position. Filtered logcat contained no `FocusRelatedWarning`, `FocusRequester`, `FATAL EXCEPTION`, `AndroidRuntime`, Compose exception, or ANR match
+- the hero naturally scrolls with the feed. At the tested viewport, the board-focused view has already scrolled the hero offscreen; a simultaneous board focus and visible hero is not expected in this layout
+
+Top-level Discover, Library, Search, and Settings destinations are intentionally deferred until those routes are implemented and wired. No dead navigation controls, fake recommendations, or fake metadata were added. Do not mark all of Phase 3B complete on this milestone.
 
 Do not invent recommendation sources.
 
@@ -461,4 +477,4 @@ Safe bounded work that may proceed:
 - document/prepare LocalSearch and search-history bridge work without inventing duplicate TV-only backend state
 - prepare performance benchmark/Baseline Profile infrastructure once stable test journeys exist
 
-The next coding task should be the controlled TV Material migration/audit. After that, proceed to Phase 3B production Home.
+Phase 3A and the controlled TV Material migration/audit are complete. Phase 3B-A production Home content is implemented above. Continue Phase 3 only when ready to implement real top-level destinations and the later Details, stream selection, and playback work; do not present unwired destinations as navigation.

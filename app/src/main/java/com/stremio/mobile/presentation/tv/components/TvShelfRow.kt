@@ -31,7 +31,8 @@ internal fun TvShelfRow(
     registry: TvFocusRegistry,
     rowStates: MutableMap<String, LazyListState>,
     rowScrollPositions: MutableMap<String, TvRowScrollPosition>,
-    onFocused: (String) -> Unit,
+    continueWatching: Boolean,
+    onFocused: (String, CatalogItem) -> Unit,
     onVertical: (String, Int) -> Unit,
     onActivate: (CatalogItem, String) -> Unit,
 ) {
@@ -59,11 +60,19 @@ internal fun TvShelfRow(
             val right = contentKeys.getOrNull(index + 1)?.let { registry.requester("$shelfKey|$it") } ?: requester
             androidx.compose.runtime.key(key) {
                 var focused = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                TvPosterCard(item, focused.value, active, requester, left, right,
-                    onFocus = { focused.value = true; onFocused(key) },
-                    onFocusLost = { focused.value = false },
-                    onUp = { onVertical(key, -1) }, onDown = { onVertical(key, 1) },
-                    onActivate = { onActivate(item, key) })
+                if (continueWatching) {
+                    TvContinueWatchingCard(item, focused.value, active, requester, left, right,
+                        onFocus = { focused.value = true; onFocused(key, item) },
+                        onFocusLost = { focused.value = false },
+                        onUp = { onVertical(key, -1) }, onDown = { onVertical(key, 1) },
+                        onActivate = { onActivate(item, key) })
+                } else {
+                    TvPosterCard(item, focused.value, active, requester, left, right,
+                        onFocus = { focused.value = true; onFocused(key, item) },
+                        onFocusLost = { focused.value = false },
+                        onUp = { onVertical(key, -1) }, onDown = { onVertical(key, 1) },
+                        onActivate = { onActivate(item, key) })
+                }
             }
         }
     }

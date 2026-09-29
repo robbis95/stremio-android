@@ -487,6 +487,12 @@ Candidate grouped states, only if/when individual flows become unwieldy:
 
 The existing MainViewModel may continue exposing narrow read-only flows until grouping has a concrete benefit.
 
+### Production Home ownership
+
+`TvApp` supplies the existing board-shelf and Continue Watching flows to a small immutable `TvHomePresentation`; it does not introduce another backend state model. That presentation adds only layout semantics: a non-focusable hero section, an optional stable `tv:continue-watching` shelf, and board shelves that retain original board indices. Its explicit semantic-key-to-LazyColumn-index mapping keeps focus restoration independent of the hero and optional shelf. Continue Watching enrichment is a pure presentation transformation that matches existing board previews by `type + id` and preserves all library progress/playback state.
+
+The hero observes the focused `CatalogItem` preview only. Its visual candidate settles after a 150 ms dwell, with no MetaDetails request on focus movement. Shelf visibility invokes the existing bounded `MainViewModel.onShelfVisible(originalBoardShelfIndex)` policy; focus movement itself does not preload catalogs. The Home hero scrolls as part of the same feed. Discover, Library, Search, and Settings navigation controls wait until their destinations can complete navigation.
+
 Do not split the ViewModel merely for aesthetic architecture.
 
 Split ownership only when responsibility or performance evidence supports it.
@@ -782,7 +788,7 @@ Before building the real Home hero:
 
 ### Gate 3 — TV state slicing
 
-Status: implemented for the current TV root. `TvApp` collects read-only account, board-shelf, and selected-details flows; Continue Watching is exposed independently for a later Home phase.
+Status: implemented for the current TV root. `TvApp` collects read-only account, board-shelf, Continue Watching, and selected-details flows; the production Home presentation consumes the two content flows without collecting the monolithic `MainUiState`.
 
 Expose minimal Home/auth/details TV state so TvApp does not depend on the full MainUiState for every screen.
 
@@ -797,13 +803,11 @@ Before the number of TV controls grows substantially:
 
 ### Gate 5 — Phase 3B production Home
 
-Then build:
-- top-level TV shell
-- real Continue Watching
-- preview-driven hero
-- actual board shelves
-- dynamic navigation structure
-- production Home visual hierarchy
+Phase 3B-A production content shell is implemented and runtime-reviewed on the Google TV ARM64 emulator. The hero, real Continue Watching, and real addon shelves share one scrolling feed; board visibility uses the bounded existing prefetch policy. The semantic focus architecture remains intact. The dynamic top-level navigation shell is still deferred until real destinations are implemented and wired.
+
+Remaining Phase 3B work:
+- implement and wire real top-level destinations before exposing their navigation controls
+- continue verifying successful asynchronous catalog emissions while focus is active
 
 ### Gate 6 — Search bridge and Search UI
 

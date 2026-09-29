@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.stremio.mobile.BuildConfig
 import com.stremio.core.runtime.RuntimeEvent
 import com.stremio.core.runtime.msg.Event
 import com.stremio.mobile.core.CoreStream
@@ -34,6 +35,7 @@ import com.stremio.mobile.presentation.tv.preferredDiscoverRequest
 import com.stremio.mobile.presentation.tv.toTvDiscoverUiState
 import com.stremio.mobile.presentation.tv.toTvDiscoverFilterGroups
 import com.stremio.mobile.presentation.tv.TvDetailsUiState
+import com.stremio.mobile.presentation.tv.TvEpisodeBrowserUiState
 import com.stremio.mobile.presentation.tv.detailsWhileLoading
 import com.stremio.mobile.presentation.tv.isDetailsItemInLibrary
 import com.stremio.mobile.server.StreamingServerController
@@ -203,6 +205,7 @@ class MainViewModel(
     private var playJob: Job? = null
     private var searchJob: Job? = null
     private var detailsJob: Job? = null
+    private val auditedTvDetailsIds = mutableSetOf<String>()
     private var addonDetailsJob: Job? = null
     private var nextVideoJob: Job? = null
     private var subtitleObserverJob: Job? = null
@@ -1188,13 +1191,7 @@ class MainViewModel(
                             if (videos.isNotEmpty()) {
                                 val seasons = videos.mapNotNull { it.seriesInfo?.season?.toInt() }.distinct().sorted()
                                 val defaultSeason = defaultSeasonForVideos(videos) ?: seasons.firstOrNull()
-                                val episodes = videos.map { video ->
-                                    video.toEpisodeOption(
-                                        season = video.seriesInfo?.season?.toInt() ?: 0,
-                                        episode = video.seriesInfo?.episode?.toInt() ?: 0,
-                                        releaseDate = formatReleaseDate(video.released),
-                                    )
-                                }
+                                val episodes = videos.mapIndexed { index, video -> video.toEpisodeOption(index) }
                                 if (streams.value.isOpen) {
                                     streams.value = streams.value.copy(
                                         isLoading = false,
@@ -1892,6 +1889,29 @@ class MainViewModel(
                         is com.stremio.core.models.LoadableMetaItem.Content.Ready -> {
                             val meta = content.value
                             if (meta.id != item.id || meta.type != item.type) return@collect
+                            if (BuildConfig.DEBUG && auditedTvDetailsIds.add("${meta.type}:${meta.id}") && meta.videos.isNotEmpty()) {
+                                val videos = meta.videos
+                                val progress = videos.mapNotNull { it.progress }
+                                Timber.tag("TvMetaDetailsAudit").d(
+                                    "%s videos=%d seasons=%s missingSeriesInfo=%d specials=%s thumbnails=%d overviews=%d released=%d upcoming=%d watched=%d current=%d progressCount=%d progressValues=%s progressRange=%s embeddedStreams=%d videosWithStreams=%d",
+                                    meta.id,
+                                    videos.size,
+                                    videos.mapNotNull { it.seriesInfo?.season }.distinct().sorted(),
+                                    videos.count { it.seriesInfo == null },
+                                    videos.any { it.seriesInfo?.season == 0L },
+                                    videos.count { !it.thumbnail.isNullOrBlank() },
+                                    videos.count { !it.overview.isNullOrBlank() },
+                                    videos.count { it.released != null },
+                                    videos.count { it.upcoming },
+                                    videos.count { it.watched },
+                                    videos.count { it.currentVideo },
+                                    progress.size,
+                                    progress.distinct().sorted(),
+                                    if (progress.isEmpty()) "none" else "${progress.minOrNull()}..${progress.maxOrNull()}",
+                                    videos.sumOf { it.streams.size },
+                                    videos.count { it.streams.isNotEmpty() },
+                                )
+                            }
                             val trailer = meta.trailerStreams.firstOrNull()?.let { catalogRepository.directUrl(it) }
                             publishTvDetails(meta.toMetaDetails(item, trailer))
                         }
@@ -1936,6 +1956,9 @@ class MainViewModel(
                 )
             } ?: false,
             isLibraryActionLoading = isDetailsLibraryActionLoading,
+            episodeBrowser = details?.let {
+                TvEpisodeBrowserUiState.from(it.episodes, it.item.continueWatchingVideoId)
+            },
         )
     }
 

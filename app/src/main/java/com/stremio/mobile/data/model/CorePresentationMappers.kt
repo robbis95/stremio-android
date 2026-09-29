@@ -2,6 +2,10 @@ package com.stremio.mobile.data.model
 
 import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.core.utils.parseStreamDescription
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 /** Library state has playback offsets in the Core state. Convert their ratio to the UI's 0..1 scale. */
 fun com.stremio.core.types.library.LibraryItem.toCatalogItem(): CatalogItem {
@@ -132,6 +136,7 @@ fun com.stremio.core.types.resource.MetaItem.toMetaDetails(
         year = item.releaseInfo,
         trailer = trailerUrl,
         isLoading = false,
+        episodes = videos.mapIndexed { index, video -> video.toEpisodeOption(index) },
     )
 }
 
@@ -168,23 +173,38 @@ fun CatalogItem.toCoreMetaItemPreviewForLibrary(): com.stremio.core.types.resour
     )
 
 fun com.stremio.core.types.resource.Video.toEpisodeOption(
-    season: Int,
-    episode: Int,
-    releaseDate: String?,
+    originalIndex: Int = 0,
 ): EpisodeOption = EpisodeOption(
     videoId = id,
-    season = season,
-    episode = episode,
+    season = seriesInfo?.season?.toInt() ?: 0,
+    episode = seriesInfo?.episode?.toInt() ?: 0,
     title = title,
     thumbnail = thumbnail,
-    releaseDate = releaseDate,
+    releaseDate = released.toFormattedReleaseDate(),
     watched = watched,
     isCurrent = currentVideo,
     overview = overview,
     progress = progress,
     upcoming = upcoming,
     released = released?.toCoreTimestamp(),
+    seriesInfo = seriesInfo?.let { EpisodeSeriesInfo(it.season, it.episode) },
+    originalIndex = originalIndex,
 )
+
+/** Compatibility adapter for the existing mobile Streams sheet call shape. */
+fun com.stremio.core.types.resource.Video.toEpisodeOption(
+    season: Int,
+    episode: Int,
+    releaseDate: String?,
+): EpisodeOption = toEpisodeOption().copy(season = season, episode = episode, releaseDate = releaseDate)
+
+private fun pbandk.wkt.Timestamp?.toFormattedReleaseDate(): String? {
+    val timestamp = this ?: return null
+    if (timestamp.seconds <= 0L) return null
+    return SimpleDateFormat("MMM d, yyyy", Locale.getDefault()).apply {
+        timeZone = TimeZone.getDefault()
+    }.format(Date(timestamp.seconds * 1000L))
+}
 
 fun CoreStream.toStreamOption(index: Int): StreamOption {
     val rawDescription = stream.description?.takeIf { it.isNotBlank() } ?: stream.thumbnail

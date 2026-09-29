@@ -11,4 +11,6 @@ data class MetaDetails(
     val trailer: String? = null,
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** Full MetaDetails videos, mapped once from the existing Core response. */
+    val episodes: List<EpisodeOption> = emptyList(),
 )

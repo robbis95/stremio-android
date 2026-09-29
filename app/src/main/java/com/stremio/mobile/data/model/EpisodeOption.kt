@@ -14,4 +14,10 @@ data class EpisodeOption(
     val progress: Double? = null,
     val upcoming: Boolean = false,
     val released: CoreTimestamp? = null,
+    /** Null only when Core omitted seriesInfo; numeric season zero remains a real Specials season. */
+    val seriesInfo: EpisodeSeriesInfo? = null,
+    /** Stable source order used only to break equal or missing episode-number ties. */
+    val originalIndex: Int = 0,
 )
+
+data class EpisodeSeriesInfo(val season: Long, val episode: Long)

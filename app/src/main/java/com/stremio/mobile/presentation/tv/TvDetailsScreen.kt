@@ -19,9 +19,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -36,7 +34,6 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
-import coil3.compose.AsyncImagePainter
 import com.stremio.mobile.data.model.MetaDetails
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
@@ -53,7 +50,6 @@ internal fun TvDetailsScreen(
     val libraryRequester = remember { FocusRequester() }
     val backRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
-    var logoLoaded by remember(item?.id, item?.logo) { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         runCatching { libraryRequester.requestFocus() }
@@ -109,40 +105,38 @@ internal fun TvDetailsScreen(
             TvDetailsArtworkMode.TextOnly -> Unit
         }
 
-        Column(
+        if (item != null && state.episodeBrowser != null) {
+            TvEpisodeBrowserContent(
+                item = item,
+                state = state,
+                browser = state.episodeBrowser,
+                libraryRequester = libraryRequester,
+                backRequester = backRequester,
+                onLibraryAction = onLibraryAction,
+                onBack = onBack,
+            )
+        } else Column(
             Modifier.fillMaxSize().verticalScroll(scrollState)
                 .padding(start = 72.dp, end = 72.dp, top = 38.dp, bottom = 30.dp)
                 .fillMaxWidth(0.66f),
             verticalArrangement = Arrangement.spacedBy(0.dp),
         ) {
-            if (item != null && !item.logo.isNullOrBlank() && !logoLoaded) {
+            if (item != null && !item.logo.isNullOrBlank()) {
                 AsyncImage(
                     model = item.logo,
                     contentDescription = item.name,
                     contentScale = ContentScale.Fit,
-                    onState = { if (it is AsyncImagePainter.State.Success) logoLoaded = true },
                     modifier = Modifier.width(380.dp).height(68.dp),
                 )
             }
-            if (item == null || !logoLoaded) {
-                Text(
-                    text = item?.name ?: "Details",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = TvColors.primaryText,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            } else {
-                // Keep the factual title visible even when a technically successful logo asset
-                // has little contrast or transparent pixels. It remains clearly subordinate.
-                Text(
-                    text = item.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = TvColors.secondaryText,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            // Keep the factual title as a fallback while an optional logo loads or fails.
+            Text(
+                text = item?.name ?: "Details",
+                style = if (item?.logo.isNullOrBlank()) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.titleMedium,
+                color = if (item?.logo.isNullOrBlank()) TvColors.primaryText else TvColors.secondaryText,
+                maxLines = if (item?.logo.isNullOrBlank()) 2 else 1,
+                overflow = TextOverflow.Ellipsis,
+            )
 
             val metadata = details?.let(::detailsMetadataLine).orEmpty()
             if (metadata.isNotEmpty()) {

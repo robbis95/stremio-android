@@ -16,6 +16,7 @@ import com.stremio.mobile.core.CoreStream
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -220,16 +221,32 @@ class CorePresentationMappersTest {
                 metaDetailsStreams = "streams",
                 externalPlayer = VideoDeepLinks.ExternalPlayerLink(),
             ),
-        ).toEpisodeOption(season = 1, episode = 2, releaseDate = "Nov 14, 2023")
+        ).toEpisodeOption(originalIndex = 3)
 
         assertEquals("s1:e2", episode.videoId)
+        assertEquals("Episode title", episode.title)
+        assertEquals("thumb.jpg", episode.thumbnail)
         assertEquals("Episode overview", episode.overview)
         assertEquals(37.5, episode.progress!!, 0.0)
         assertTrue(episode.upcoming)
         assertTrue(episode.watched)
         assertTrue(episode.isCurrent)
-        assertEquals("Nov 14, 2023", episode.releaseDate)
+        assertNotNull(episode.releaseDate)
         assertEquals(CoreTimestamp(1_700_000_001L, 7), episode.released)
+        assertEquals(EpisodeSeriesInfo(1, 2), episode.seriesInfo)
+        assertEquals(3, episode.originalIndex)
+    }
+
+    @Test
+    fun `missing series info remains distinct from actual specials season zero`() {
+        fun video(seriesInfo: Video.SeriesInfo?) = Video(
+            id = "episode", title = "Episode", seriesInfo = seriesInfo,
+            upcoming = false, watched = false, currentVideo = false,
+            deepLinks = VideoDeepLinks(metaDetailsVideos = "videos", metaDetailsStreams = "streams", externalPlayer = VideoDeepLinks.ExternalPlayerLink()),
+        ).toEpisodeOption()
+
+        assertNull(video(null).seriesInfo)
+        assertEquals(EpisodeSeriesInfo(0, 1), video(Video.SeriesInfo(season = 0, episode = 1)).seriesInfo)
     }
 
     @Test
@@ -297,6 +314,31 @@ class CorePresentationMappersTest {
         assertEquals(listOf("Actor Name"), details.cast)
         assertEquals(listOf("Director Name"), details.director)
         assertEquals("https://trailer", details.trailer)
+    }
+
+    @Test
+    fun `full details maps its existing metadata videos into app domain episodes`() {
+        val video = Video(
+            id = "s2e4", title = "No Refuge", released = pbandk.wkt.Timestamp(seconds = 1_700_000_001L),
+            overview = "Episode synopsis", thumbnail = "episode-thumb.jpg",
+            seriesInfo = Video.SeriesInfo(season = 2, episode = 4),
+            upcoming = false, watched = true, currentVideo = true, progress = 100.0,
+            deepLinks = VideoDeepLinks(metaDetailsVideos = "videos", metaDetailsStreams = "streams", externalPlayer = VideoDeepLinks.ExternalPlayerLink()),
+        )
+        val details = fullMetaItem(videos = listOf(video)).toMetaDetails(
+            CatalogItem("tt123", "series", "Silo", null, null, null, null),
+        )
+
+        assertEquals(1, details.episodes.size)
+        assertEquals(video.id, details.episodes.single().videoId)
+        assertEquals(video.title, details.episodes.single().title)
+        assertEquals(video.overview, details.episodes.single().overview)
+        assertEquals(video.thumbnail, details.episodes.single().thumbnail)
+        assertNotNull(details.episodes.single().releaseDate)
+        assertTrue(details.episodes.single().watched)
+        assertTrue(details.episodes.single().isCurrent)
+        assertEquals(100.0, details.episodes.single().progress!!, 0.0)
+        assertEquals(EpisodeSeriesInfo(2, 4), details.episodes.single().seriesInfo)
     }
 
     @Test
@@ -433,6 +475,7 @@ class CorePresentationMappersTest {
         watched: Boolean = true,
         behaviorHints: MetaItemBehaviorHints = MetaItemBehaviorHints("full-default", "full-featured", true),
         links: List<com.stremio.core.types.resource.Link> = emptyList(),
+        videos: List<Video> = emptyList(),
     ) = MetaItem(
         id = id,
         type = type,
@@ -445,6 +488,7 @@ class CorePresentationMappersTest {
         releaseInfo = releaseInfo,
         runtime = runtime,
         links = links,
+        videos = videos,
         behaviorHints = behaviorHints,
         deepLinks = MetaItemDeepLinks(),
         inLibrary = inLibrary,

@@ -33,6 +33,9 @@ import com.stremio.mobile.presentation.tv.toTvLibraryUiState
 import com.stremio.mobile.presentation.tv.preferredDiscoverRequest
 import com.stremio.mobile.presentation.tv.toTvDiscoverUiState
 import com.stremio.mobile.presentation.tv.toTvDiscoverFilterGroups
+import com.stremio.mobile.presentation.tv.TvDetailsUiState
+import com.stremio.mobile.presentation.tv.detailsWhileLoading
+import com.stremio.mobile.presentation.tv.isDetailsItemInLibrary
 import com.stremio.mobile.server.StreamingServerController
 import com.stremio.mobile.server.StreamingServerState
 import com.stremio.mobile.server.formatServerErrorMessage
@@ -111,6 +114,12 @@ class MainViewModel(
     private val noSeedsReason = MutableStateFlow<String?>(null)
     private val selectedDetails = MutableStateFlow<MetaDetails?>(null)
     val tvSelectedDetails: StateFlow<MetaDetails?> = selectedDetails.asStateFlow()
+    private val _tvDetailsUiState = MutableStateFlow(TvDetailsUiState())
+    internal val tvDetailsUiState: StateFlow<TvDetailsUiState> = _tvDetailsUiState.asStateFlow()
+    private var detailsLibraryOverride: Boolean? = null
+    private var detailsLibraryActionJob: Job? = null
+    private var isDetailsLibraryActionLoading = false
+    private var hasAuthoritativeLibraryMembership = false
     private val continueWatching = MutableStateFlow(CatalogShelf(title = "Continue Watching"))
     val tvContinueWatching: StateFlow<CatalogShelf> = continueWatching.asStateFlow()
     private val boardShelves = MutableStateFlow<List<CatalogShelf>>(emptyList())
@@ -1060,6 +1069,7 @@ class MainViewModel(
                     return@collect
                 }
                 if (pending == coreRequest) pendingLibraryRequest = null
+                if (!shelf.isLoading && shelf.error == null) hasAuthoritativeLibraryMembership = true
 
                 val identity = coreRequest?.selectionIdentity()
                 tvLibraryOrderSnapshot = stableLibraryOrder(
@@ -1072,6 +1082,7 @@ class MainViewModel(
                     items = tvLibraryOrderSnapshot.items,
                     loading = pendingLibraryRequest != null,
                 )
+                refreshTvDetailsUiState()
             }
         }
     }
@@ -1850,67 +1861,50 @@ class MainViewModel(
 
     fun openDetails(item: CatalogItem) {
         detailsJob?.cancel()
-        selectedDetails.value = MetaDetails(item = item, isLoading = true)
+        detailsLibraryActionJob?.cancel()
+        isDetailsLibraryActionLoading = false
+        detailsLibraryOverride = null
+        _tvDetailsUiState.value = TvDetailsUiState(
+            details = detailsWhileLoading(item),
+            isInLibrary = isDetailsItemInLibrary(
+                item = item,
+                libraryItems = library.value.items,
+                libraryIsAuthoritative = hasAuthoritativeLibraryMembership,
+            ),
+        )
+        selectedDetails.value = detailsWhileLoading(item)
         detailsJob = viewModelScope.launch {
-            catalogRepository.getMetaDetailsFlow(type = item.type, id = item.id, videoId = null, guessStreamPath = false)
-                .collect { details ->
+            try {
+                catalogRepository.getMetaDetailsFlow(type = item.type, id = item.id, videoId = null, guessStreamPath = false)
+                    .collect { details ->
                     val metaItem = details.metaItem
                     if (metaItem == null) {
-                        selectedDetails.value = MetaDetails(item = item, isLoading = true)
+                        publishTvDetails(detailsWhileLoading(item))
                         return@collect
                     }
                     when (val content = metaItem.content) {
                         is com.stremio.core.models.LoadableMetaItem.Content.Loading -> {
-                            selectedDetails.value = MetaDetails(item = item, isLoading = true)
+                            publishTvDetails(detailsWhileLoading(item))
                         }
                         is com.stremio.core.models.LoadableMetaItem.Content.Error -> {
-                            selectedDetails.value = MetaDetails(
-                                item = item,
-                                isLoading = false,
-                                error = content.value.message,
-                            )
+                            publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = content.value.message))
                         }
                         is com.stremio.core.models.LoadableMetaItem.Content.Ready -> {
                             val meta = content.value
-                            val detailsItem = CatalogItem(
-                                id = meta.id,
-                                type = meta.type,
-                                name = meta.name,
-                                poster = meta.poster ?: item.poster,
-                                background = meta.background ?: item.background,
-                                releaseInfo = meta.releaseInfo ?: item.releaseInfo,
-                                imdbRating = item.imdbRating,
-                                inCinema = item.inCinema,
-                                watched = meta.watched
-                            )
-                            val genres = meta.links.filter {
-                                it.category.equals("genre", ignoreCase = true) || it.category.equals("genres", ignoreCase = true)
-                            }.map { it.name }
-                            val cast = meta.links.filter {
-                                it.category.equals("cast", ignoreCase = true) || it.category.equals("actor", ignoreCase = true)
-                            }.map { it.name }.take(8)
-                            val director = meta.links.filter {
-                                it.category.equals("director", ignoreCase = true) || it.category.equals("directors", ignoreCase = true)
-                            }.map { it.name }.take(4)
+                            if (meta.id != item.id || meta.type != item.type) return@collect
                             val trailer = meta.trailerStreams.firstOrNull()?.let { catalogRepository.directUrl(it) }
-
-                            selectedDetails.value = MetaDetails(
-                                item = detailsItem,
-                                description = meta.description,
-                                genres = genres,
-                                cast = cast,
-                                director = director,
-                                runtime = meta.runtime,
-                                year = meta.releaseInfo ?: detailsItem.releaseInfo,
-                                trailer = trailer,
-                                isLoading = false,
-                            )
+                            publishTvDetails(meta.toMetaDetails(item, trailer))
                         }
                         else -> {
-                            selectedDetails.value = MetaDetails(item = item, isLoading = true)
+                            publishTvDetails(detailsWhileLoading(item))
                         }
                     }
-                }
+                    }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = error.message ?: "MetaDetails request failed"))
+            }
         }
     }
 
@@ -1918,6 +1912,65 @@ class MainViewModel(
         detailsJob?.cancel()
         detailsJob = null
         selectedDetails.value = null
+        detailsLibraryActionJob?.cancel()
+        detailsLibraryActionJob = null
+        detailsLibraryOverride = null
+        isDetailsLibraryActionLoading = false
+        _tvDetailsUiState.value = TvDetailsUiState()
+    }
+
+    private fun publishTvDetails(details: MetaDetails) {
+        selectedDetails.value = details
+        refreshTvDetailsUiState()
+    }
+
+    private fun refreshTvDetailsUiState() {
+        val details = selectedDetails.value
+        _tvDetailsUiState.value = TvDetailsUiState(
+            details = details,
+            isInLibrary = detailsLibraryOverride ?: details?.let {
+                isDetailsItemInLibrary(
+                    item = it.item,
+                    libraryItems = library.value.items,
+                    libraryIsAuthoritative = hasAuthoritativeLibraryMembership,
+                )
+            } ?: false,
+            isLibraryActionLoading = isDetailsLibraryActionLoading,
+        )
+    }
+
+    fun toggleTvDetailsLibrary() {
+        val item = selectedDetails.value?.item ?: return
+        if (_tvDetailsUiState.value.isLibraryActionLoading) return
+        val target = !_tvDetailsUiState.value.isInLibrary
+        detailsLibraryOverride = target
+        isDetailsLibraryActionLoading = true
+        refreshTvDetailsUiState()
+        val actionJob = viewModelScope.launch {
+            try {
+                if (target) {
+                    catalogRepository.addToLibrary(item)
+                    com.posthog.PostHog.capture(
+                        event = "Library Item Added",
+                        properties = mapOf("item_type" to item.type, "hashed_item_id" to sha256(item.id)),
+                    )
+                } else {
+                    catalogRepository.removeFromLibrary(item.id)
+                    com.posthog.PostHog.capture(
+                        event = "Library Item Removed",
+                        properties = mapOf("item_type" to item.type, "hashed_item_id" to sha256(item.id)),
+                    )
+                }
+            } finally {
+                // Core actions publish through the Library flow; the short busy state prevents
+                // duplicate remote actions while keeping the Details route and focus in place.
+                kotlinx.coroutines.delay(800)
+                isDetailsLibraryActionLoading = false
+                refreshTvDetailsUiState()
+            }
+        }
+        detailsLibraryActionJob?.cancel()
+        detailsLibraryActionJob = actionJob
     }
 
     fun toggleLibrary(item: CatalogItem) {

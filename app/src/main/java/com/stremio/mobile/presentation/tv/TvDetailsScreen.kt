@@ -1,94 +1,216 @@
 package com.stremio.mobile.presentation.tv
 
-import androidx.compose.foundation.border
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
+import coil3.compose.AsyncImagePainter
 import com.stremio.mobile.data.model.MetaDetails
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvDimens
 
 @Composable
 internal fun TvDetailsScreen(
-    details: MetaDetails?,
+    state: TvDetailsUiState,
+    onLibraryAction: () -> Unit,
     onBack: () -> Unit,
 ) {
+    val details = state.details
+    val item = details?.item
+    val mode = item?.let(::classifyDetailsArtwork) ?: TvDetailsArtworkMode.TextOnly
+    val libraryRequester = remember { FocusRequester() }
     val backRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { backRequester.requestFocus() }
+    val scrollState = rememberScrollState()
+    var logoLoaded by remember(item?.id, item?.logo) { mutableStateOf(false) }
 
-    Box(Modifier.fillMaxSize().background(TvColors.background).padding(horizontal = 64.dp, vertical = 38.dp)) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(bottom = 54.dp),
-            horizontalArrangement = Arrangement.spacedBy(42.dp),
-        ) {
-            Box(
-                modifier = Modifier.size(width = 260.dp, height = 390.dp)
-                    .border(1.dp, TvColors.divider, RoundedCornerShape(TvDimens.controlRadius)),
-                contentAlignment = Alignment.Center,
-            ) {
+    LaunchedEffect(Unit) {
+        runCatching { libraryRequester.requestFocus() }
+            .onFailure { runCatching { backRequester.requestFocus() } }
+    }
+
+    Box(Modifier.fillMaxSize().background(TvColors.background)) {
+        when (mode) {
+            TvDetailsArtworkMode.RichBackdrop, TvDetailsArtworkMode.LandscapeArtwork -> {
+                val artUrl = if (mode == TvDetailsArtworkMode.RichBackdrop) item?.background else item?.poster
                 AsyncImage(
-                    model = details?.item?.background ?: details?.item?.poster,
-                    contentDescription = details?.item?.name,
+                    model = artUrl,
+                    contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize(),
                 )
-                if (details == null || details.isLoading) CircularProgressIndicator()
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.horizontalGradient(
+                            0f to TvColors.background,
+                            0.34f to TvColors.background.copy(alpha = 0.98f),
+                            0.56f to TvColors.background.copy(alpha = 0.84f),
+                            0.76f to TvColors.background.copy(alpha = 0.35f),
+                            1f to TvColors.background.copy(alpha = 0.04f),
+                        ),
+                    ),
+                )
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            0f to TvColors.background.copy(alpha = 0.10f),
+                            0.64f to TvColors.background.copy(alpha = 0f),
+                            1f to TvColors.background.copy(alpha = 0.54f),
+                        ),
+                    ),
+                )
             }
-            Column(modifier = Modifier.weight(1f).padding(top = 8.dp)) {
+            TvDetailsArtworkMode.ContainedPoster -> {
+                Box(
+                    Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(330.dp)
+                        .padding(end = 66.dp, top = 36.dp, bottom = 36.dp)
+                        .background(TvColors.artworkPanel, RoundedCornerShape(TvDimens.cardRadius)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    AsyncImage(
+                        model = item?.poster,
+                        contentDescription = item?.name,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize().padding(14.dp),
+                    )
+                }
+            }
+            TvDetailsArtworkMode.TextOnly -> Unit
+        }
+
+        Column(
+            Modifier.fillMaxSize().verticalScroll(scrollState)
+                .padding(start = 72.dp, end = 72.dp, top = 38.dp, bottom = 30.dp)
+                .fillMaxWidth(0.66f),
+            verticalArrangement = Arrangement.spacedBy(0.dp),
+        ) {
+            if (item != null && !item.logo.isNullOrBlank() && !logoLoaded) {
+                AsyncImage(
+                    model = item.logo,
+                    contentDescription = item.name,
+                    contentScale = ContentScale.Fit,
+                    onState = { if (it is AsyncImagePainter.State.Success) logoLoaded = true },
+                    modifier = Modifier.width(380.dp).height(68.dp),
+                )
+            }
+            if (item == null || !logoLoaded) {
                 Text(
-                    text = details?.item?.name ?: "Loading title…",
+                    text = item?.name ?: "Details",
                     style = MaterialTheme.typography.headlineLarge,
                     color = TvColors.primaryText,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
-                Spacer(Modifier.height(12.dp))
-                val metadata = listOfNotNull(details?.year, details?.runtime, details?.item?.type?.replaceFirstChar { it.uppercase() })
-                if (metadata.isNotEmpty()) {
-                    Text(metadata.joinToString("  •  "), style = MaterialTheme.typography.titleMedium, color = TvColors.accent)
-                    Spacer(Modifier.height(20.dp))
+            } else {
+                // Keep the factual title visible even when a technically successful logo asset
+                // has little contrast or transparent pixels. It remains clearly subordinate.
+                Text(
+                    text = item.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = TvColors.secondaryText,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            val metadata = details?.let(::detailsMetadataLine).orEmpty()
+            if (metadata.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                Text(metadata, color = TvColors.secondaryText, style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+
+            if (!details?.description.isNullOrBlank()) {
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    text = details.description.orEmpty(),
+                    color = TvColors.primaryText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    maxLines = 4,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            Spacer(Modifier.height(22.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = onLibraryAction,
+                    enabled = !state.isLibraryActionLoading,
+                    modifier = Modifier.focusRequester(libraryRequester)
+                        .focusProperties { left = backRequester; up = libraryRequester; down = libraryRequester },
+                ) {
+                    Text(if (state.isInLibrary) "✓  In Library" else "+  Add to Library")
                 }
-                when {
-                    details == null || details.isLoading -> Text("Loading details…", color = TvColors.secondaryText, style = MaterialTheme.typography.bodyLarge)
-                    details.error != null -> Text(details.error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyLarge)
-                    !details.description.isNullOrBlank() -> Text(details.description, color = TvColors.primaryText, style = MaterialTheme.typography.bodyLarge)
-                    else -> Text("No description is available.", color = TvColors.secondaryText, style = MaterialTheme.typography.bodyLarge)
+                OutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.focusRequester(backRequester)
+                        .focusProperties { right = libraryRequester; up = backRequester; down = backRequester },
+                ) {
+                    Text("Back")
                 }
-                if (details?.genres?.isNotEmpty() == true) {
-                    Spacer(Modifier.height(18.dp))
-                    Text(details.genres.joinToString("  •  "), color = TvColors.secondaryText, style = MaterialTheme.typography.titleSmall)
+                if (state.isLibraryActionLoading) {
+                    Text("Updating…", color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall)
                 }
             }
-        }
-        OutlinedButton(
-            onClick = onBack,
-            modifier = Modifier.align(Alignment.BottomStart)
-                .focusRequester(backRequester)
-                .focusProperties { up = backRequester },
-        ) {
-            Text("Back", style = MaterialTheme.typography.titleMedium)
+
+            if (details?.isLoading == true) {
+                Spacer(Modifier.height(10.dp))
+                Text("Loading additional details…", color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall)
+            } else if (!details?.error.isNullOrBlank()) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "Additional details could not be loaded.",
+                    color = TvColors.secondaryText,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+
+            val genres = details?.genres.orEmpty()
+            if (genres.isNotEmpty()) {
+                Spacer(Modifier.height(18.dp))
+                Text(genres.distinct().joinToString("  ·  "), color = TvColors.secondaryText,
+                    style = MaterialTheme.typography.titleSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            val credits = buildList {
+                details?.director.orEmpty().takeIf { it.isNotEmpty() }?.let { add("Director: ${it.joinToString(", ")}") }
+                details?.cast.orEmpty().takeIf { it.isNotEmpty() }?.let { add("Cast: ${it.joinToString(", ")}") }
+            }
+            credits.forEach { credit ->
+                Spacer(Modifier.height(8.dp))
+                Text(credit, color = TvColors.secondaryText, style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

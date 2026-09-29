@@ -26,7 +26,7 @@ data class CatalogItem(
 
 enum class CatalogPosterShape { Poster, Landscape, Square }
 
-data class CatalogLink(val name: String, val category: String)
+data class CatalogLink(val name: String, val category: String, val url: String? = null)
 
 data class CatalogBehaviorHints(
     val defaultVideoId: String? = null,

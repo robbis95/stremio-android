@@ -848,13 +848,25 @@ Status: TV Search and the first working Home/Search navigation shell are impleme
 
 Status: implemented and runtime-verified on the Google TV ARM64 emulator. The Home/Discover/Search nav order is live. Discover consumes Core `CatalogWithFilters` through a narrow TV state mapping, uses Core requests for generic type/catalog/extra filters, has its own five-column semantic focus and saveable scroll memory, and uses the app-side Core pagination wrapper with bounded end-of-grid triggering and request-identity de-duplication. Runtime exposed Movie, Series, Channel, add-on-defined catalogs, and Genre; Channel pagination appended while the focused semantic item stayed stable. Library remains unimplemented.
 
-### Gate 7 — details/episodes/stream intelligence
+### Gate 7A — Phase 5A production TV Details
 
-Preserve:
-- episode progress
-- current/watched/upcoming
-- stream behavior hints including binge-group information
-- real metadata
+Status: implemented and runtime-reviewed on `feat/android-tv` from starting remote tip `70c19166780cf88271fb41598991bb6eb75296b9`. `TvApp` observes immutable `TvDetailsUiState`; Compose does not inspect Core protobufs. Opening Details displays the existing preview immediately, then merges matching full `MetaItem` data. A missing/failed optional metadata response leaves preview content, Library action, and Back usable. The full response must match the requested `type:id`; missing full fields fall back to preview values. Continue Watching progress/video identity, rating, inCinema, remaining episodes, and its semantic marker survive enrichment. Core-backed membership/watched fields remain authoritative.
+
+Details art presentation is a pure classification from actual metadata: background → rich backdrop; landscape poster only when `posterShape` says Landscape → wide poster art; other poster → contained poster; no image → neutral text-first page. The TV page uses a left readability gradient without blur/recolor, a logo/title hierarchy, factual metadata, a clamped synopsis, and informational genre/director/cast text. The one content action is exact-identity Library Add/Remove through the existing repository/Core action. Live Library membership projects into its label, and action progress preserves the focused button and route. Initial focus is Library action, with Back as the fallback. Play, episodes, trailers, and stream selection are deliberately absent at this gate.
+
+On the 960×540 dp Google TV emulator, clean relaunch resumed `TvActivity` without a recurring app-process startup ANR. Home, Discover, Library, and Search each opened real Details and returned to the exact originating semantic item on Back (Home Silo; Discover Unabomber; Library Silo; Search Midnight Driver). Details was left idle for 30 seconds without spontaneous movement. Real Core metadata rendered release/runtime/type, synopsis, and available genres/director/cast. The Add/Remove action updated and returned to its original state with focus retained. The final filtered logcat sample had no app-process ANR, FocusRelatedWarning/FocusRequester, AndroidRuntime/FATAL, or Compose exception. The checked APK was installed with `adb install -r`, preserving app data. No natural metadata failure occurred; pure fallback tests cover that state.
+
+The pinned generated Core model carries `MetaItem.videos`; each `Video` includes identity/title/release/overview/thumbnail and can include streams plus `seriesInfo` season/episode, upcoming, watched, current-video, and progress. The Silo Details runtime check confirmed a real series opens through MetaDetails, but TV Details does not display or instrument its video list, so count and populated state values remain unmeasured. Capture those against a Core-backed series fixture/targeted instrumentation in Phase 5B before deciding season grouping and resume presentation.
+
+Ten new pure tests bring the suite to 85 passing tests, including partial-link retention and stale-preview Library membership override. Compile, assemble, and unit-test Gradle tasks passed without a reproduced stall. Screenshots are outside Git at `/private/tmp/stremio-android-tv-phase5a/`. Portrait-only/no-background and TextOnly runtime examples were not available; their deterministic policy is covered by tests. No natural metadata error occurred and the error UI has no dedicated pure presentation test.
+
+### Gate 7B — Phase 5B episode browsing
+
+Next: inspect real `MetaDetails.videos` values for a series and define a loss-minimal Android episode presentation that retains video identity, season/episode, overview/thumbnail, release, current/watched/upcoming, and progress where Core provides them. Then implement deterministic season/episode browsing and focus restoration. Do not request streams in this gate.
+
+### Gate 7C — stream selection
+
+After episode browsing is stable, map real Core stream results and behavior hints into a TV-native, deterministic provider/stream selection flow. Preserve episode identity and progress through navigation. Playback work belongs to its own later gate.
 
 ### Gate 8 — performance instrumentation
 

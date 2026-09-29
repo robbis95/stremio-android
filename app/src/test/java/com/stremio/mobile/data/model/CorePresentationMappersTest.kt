@@ -4,6 +4,7 @@ import com.stremio.core.types.addon.ResourcePath
 import com.stremio.core.types.addon.ResourceRequest
 import com.stremio.core.types.resource.MetaItemBehaviorHints
 import com.stremio.core.types.resource.MetaItemDeepLinks
+import com.stremio.core.types.resource.MetaItem
 import com.stremio.core.types.resource.MetaItemPreview
 import com.stremio.core.types.resource.PosterShape
 import com.stremio.core.types.resource.Stream
@@ -232,6 +233,136 @@ class CorePresentationMappersTest {
     }
 
     @Test
+    fun `full details fills richer metadata while preserving preview-only Continue Watching state`() {
+        val preview = CatalogItem(
+            id = "tt123", type = "series", name = "Preview title", poster = "preview-poster",
+            background = "preview-background", releaseInfo = "2020", imdbRating = "8.1",
+            progress = 0.42f, inCinema = true, watched = false, remainingEpisodes = 4,
+            continueWatchingVideoId = "s2:e3", isContinueWatching = true,
+            posterShape = CatalogPosterShape.Poster, logo = "preview-logo", description = "Preview description",
+            runtime = "Preview runtime", inLibrary = false,
+            behaviorHints = CatalogBehaviorHints("preview-default", "preview-featured", true),
+        )
+        val full = fullMetaItem(
+            posterShape = PosterShape.LANDSCAPE,
+            poster = "full-poster",
+            background = "full-background",
+            logo = "full-logo",
+            description = "Full description",
+            releaseInfo = "2024",
+            runtime = "48m",
+            inLibrary = true,
+            watched = true,
+            behaviorHints = MetaItemBehaviorHints("full-default", "full-featured", true),
+            links = listOf(
+                com.stremio.core.types.resource.Link("Drama", "genre", "genre://drama"),
+                com.stremio.core.types.resource.Link("Actor Name", "cast", "person://actor"),
+                com.stremio.core.types.resource.Link("Director Name", "director", "person://director"),
+            ),
+        )
+
+        val merged = mergeDetailsPreview(preview, full)
+
+        assertEquals("tt123", merged.id)
+        assertEquals("series", merged.type)
+        assertEquals("Full title", merged.name)
+        assertEquals("full-poster", merged.poster)
+        assertEquals("full-background", merged.background)
+        assertEquals("full-logo", merged.logo)
+        assertEquals("Full description", merged.description)
+        assertEquals("2024", merged.releaseInfo)
+        assertEquals("48m", merged.runtime)
+        assertEquals(CatalogPosterShape.Landscape, merged.posterShape)
+        assertEquals(
+            listOf(
+                CatalogLink("Drama", "genre", "genre://drama"),
+                CatalogLink("Actor Name", "cast", "person://actor"),
+                CatalogLink("Director Name", "director", "person://director"),
+            ),
+            merged.links,
+        )
+        assertEquals(true, merged.inLibrary)
+        assertTrue(merged.watched)
+        assertEquals("full-default", merged.behaviorHints.defaultVideoId)
+        assertEquals("full-featured", merged.behaviorHints.featuredVideoId)
+        assertTrue(merged.behaviorHints.hasScheduledVideos)
+        assertEquals(0.42f, merged.progress!!, 0f)
+        assertEquals(4, merged.remainingEpisodes)
+        assertEquals("s2:e3", merged.continueWatchingVideoId)
+        assertTrue(merged.isContinueWatching)
+        assertEquals("8.1", merged.imdbRating)
+        assertTrue(merged.inCinema)
+        val details = full.toMetaDetails(preview, trailerUrl = "https://trailer")
+        assertEquals(listOf("Drama"), details.genres)
+        assertEquals(listOf("Actor Name"), details.cast)
+        assertEquals(listOf("Director Name"), details.director)
+        assertEquals("https://trailer", details.trailer)
+    }
+
+    @Test
+    fun `missing full metadata retains preview fields and matching identity`() {
+        val preview = CatalogItem(
+            id = "tt123", type = "movie", name = "Preview", poster = "p.jpg", background = "b.jpg",
+            releaseInfo = "2022", imdbRating = "7.2", posterShape = CatalogPosterShape.Square,
+            logo = "logo.svg", description = "Summary", runtime = "2h", links = listOf(CatalogLink("Sci-Fi", "genre")),
+            inLibrary = true, behaviorHints = CatalogBehaviorHints("default", "featured", true),
+        )
+        val merged = mergeDetailsPreview(
+            preview,
+            fullMetaItem(
+                type = "movie",
+                posterShape = PosterShape.POSTER,
+                poster = null,
+                background = null,
+                logo = null,
+                description = null,
+                releaseInfo = null,
+                runtime = null,
+                behaviorHints = MetaItemBehaviorHints(hasScheduledVideos = false),
+            ),
+        )
+
+        assertEquals("Full title", merged.name)
+        assertEquals("p.jpg", merged.poster)
+        assertEquals("b.jpg", merged.background)
+        assertEquals("2022", merged.releaseInfo)
+        assertEquals(CatalogPosterShape.Poster, merged.posterShape)
+        assertEquals("logo.svg", merged.logo)
+        assertEquals("Summary", merged.description)
+        assertEquals("2h", merged.runtime)
+        assertEquals(listOf(CatalogLink("Sci-Fi", "genre")), merged.links)
+        assertEquals("default", merged.behaviorHints.defaultVideoId)
+        assertEquals("featured", merged.behaviorHints.featuredVideoId)
+        assertFalse(merged.behaviorHints.hasScheduledVideos)
+        assertEquals("7.2", merged.imdbRating)
+    }
+
+    @Test
+    fun `partial full links enrich while retaining preview-only categories`() {
+        val preview = CatalogItem(
+            id = "tt123", type = "movie", name = "Preview", poster = null, background = null,
+            releaseInfo = null, imdbRating = null,
+            links = listOf(CatalogLink("Drama", "genre"), CatalogLink("Director Name", "director")),
+        )
+        val merged = mergeDetailsPreview(
+            preview,
+            fullMetaItem(
+                type = "movie",
+                links = listOf(com.stremio.core.types.resource.Link("Actor Name", "cast", "person://actor")),
+            ),
+        )
+        assertEquals(setOf("Drama", "Director Name", "Actor Name"), merged.links.map { it.name }.toSet())
+        assertEquals("person://actor", merged.links.single { it.name == "Actor Name" }.url)
+    }
+
+    @Test
+    fun `mismatched full item cannot replace preview identity or presentation`() {
+        val preview = CatalogItem("tt123", "movie", "Requested", null, null, null, null)
+        val merged = mergeDetailsPreview(preview, fullMetaItem(id = "different", type = "series"))
+        assertEquals(preview, merged)
+    }
+
+    @Test
     fun `stream mapping preserves selected behavior hints`() {
         val request = ResourceRequest(base = "https://addon", path = ResourcePath(resource = "stream", type = "movie", id = "id"))
         val stream = Stream(
@@ -286,5 +417,38 @@ class CorePresentationMappersTest {
         inLibrary = inLibrary,
         watched = watched,
         inCinema = inCinema,
+    )
+
+    private fun fullMetaItem(
+        id: String = "tt123",
+        type: String = "series",
+        posterShape: PosterShape = PosterShape.LANDSCAPE,
+        poster: String? = "full-poster",
+        background: String? = "full-background",
+        logo: String? = "full-logo",
+        description: String? = "Full description",
+        releaseInfo: String? = "2024",
+        runtime: String? = "48m",
+        inLibrary: Boolean = true,
+        watched: Boolean = true,
+        behaviorHints: MetaItemBehaviorHints = MetaItemBehaviorHints("full-default", "full-featured", true),
+        links: List<com.stremio.core.types.resource.Link> = emptyList(),
+    ) = MetaItem(
+        id = id,
+        type = type,
+        name = "Full title",
+        posterShape = posterShape,
+        poster = poster,
+        background = background,
+        logo = logo,
+        description = description,
+        releaseInfo = releaseInfo,
+        runtime = runtime,
+        links = links,
+        behaviorHints = behaviorHints,
+        deepLinks = MetaItemDeepLinks(),
+        inLibrary = inLibrary,
+        watched = watched,
+        receiveNotifications = false,
     )
 }

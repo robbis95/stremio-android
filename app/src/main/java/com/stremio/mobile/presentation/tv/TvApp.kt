@@ -31,7 +31,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     val account by viewModel.tvAccount.collectAsStateWithLifecycle()
     val boardShelves by viewModel.tvBoardShelves.collectAsStateWithLifecycle()
     val continueWatching by viewModel.tvContinueWatching.collectAsStateWithLifecycle()
-    val selectedDetails by viewModel.tvSelectedDetails.collectAsStateWithLifecycle()
+    val detailsUiState by viewModel.tvDetailsUiState.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
@@ -74,8 +74,8 @@ internal fun TvApp(viewModel: MainViewModel) {
             routeName = TvRoute.Login.name
         }
     }
-    LaunchedEffect(routeName, selectedDetails) {
-        if (route == TvRoute.Details && selectedDetails == null && !detailsRequested) {
+    LaunchedEffect(routeName, detailsUiState.details) {
+        if (route == TvRoute.Details && detailsUiState.details == null && !detailsRequested) {
             // A recreated activity cannot retain an in-memory detail request; recover to its origin.
             routeName = when (detailsOrigin) {
                 TvTopLevelRoute.Home -> TvRoute.Home.name
@@ -228,7 +228,11 @@ internal fun TvApp(viewModel: MainViewModel) {
                         }
                     }
                     if (route == TvRoute.Details) {
-                        TvDetailsScreen(details = selectedDetails, onBack = returnFromDetails)
+                        TvDetailsScreen(
+                            state = detailsUiState,
+                            onLibraryAction = viewModel::toggleTvDetailsLibrary,
+                            onBack = returnFromDetails,
+                        )
                     }
                 }
             }

@@ -349,13 +349,9 @@ Do not invent recommendation sources.
 - deterministic Back/focus restoration
 
 ### Phase 5 — Details, seasons, episodes, streams
-- production details
-- library action
-- seasons
-- episode rows
-- watched/resume state
-- stream discovery
-- stable provider/stream focus
+- Phase 5A production Details and Library action are recorded below
+- Phase 5B series seasons/episodes and watched/resume state
+- Phase 5C stream discovery and stable provider/stream focus
 
 ### Phase 6 — Playback
 - TV player overlay
@@ -461,6 +457,29 @@ Runtime checks confirmed All/Movie/Series; all six Core sort labels; real watche
 
 Pure tests cover Library mapping, type/sort policy, exhaustive top-level routes and Details origins, snapshot behavior, pagination identity/de-duplication, and disappearing-item focus fallback. The full requested compile, assemble, and unit-test tasks pass (75 tests total, 0 failures). Runtime APK installation used `adb install -r` and preserved app data.
 
+## Phase 5A — Production TV Details
+
+Status: implemented on `feat/android-tv`, unit-tested, built, installed, and runtime-reviewed on the existing Google TV ARM64 emulator. Starting remote tip: `70c19166780cf88271fb41598991bb6eb75296b9`.
+
+- `TvDetailsUiState` is a narrow immutable route presentation state for current Library membership and action progress. `TvApp` observes it directly and does not observe `MainUiState` or raw Core protobuf models.
+- Opening Details publishes the existing `CatalogItem` preview immediately. Full `MetaDetails` enriches that same route state when it arrives. A load failure keeps the preview page and actions usable and adds only a restrained inline message. Loading-to-ready updates do not recreate the route or its focus requesters.
+- `mergeDetailsPreview(preview, fullMetaItem)` requires matching `type:id`, uses non-empty full Core values when present, and otherwise retains preview fields. It carries Continue Watching progress/video identity, IMDb rating, inCinema, remaining episodes, and the CW marker from the preview pipeline. Core's available `inLibrary` and watched values remain authoritative. Links, poster shape, logo, artwork, runtime, release values, and behavior hints are preserved or enriched without hand-building a second `CatalogItem` mapper in `MainViewModel`.
+- Artwork selection uses actual metadata: a real background selects `RichBackdrop`; a poster is wide only when Core says `posterShape == Landscape`; all other usable posters use `ContainedPoster`; no usable image selects `TextOnly`. Backdrop colors remain visible at the right while a readability gradient blends toward the TV background at the left. No blur or image recoloring is applied.
+- The wide 960×540 dp page puts logo/title, factual release/runtime/type metadata, a three-to-five-line synopsis, Add/Remove Library and secondary Back controls at the left, with backdrop art across the right. Genres, director, and a short cast list are informational text. There is no Play, trailer, episode, or stream control.
+- The metadata line includes only real release info/year, runtime, type, and a genuine existing IMDb rating when available; it trims empty values and removes duplicates. Logo is preferred when it loads, while a textual title stays visible beneath it so an unavailable or visually empty logo cannot hide the title.
+- The Library label is projected against exact `type:id` membership from the live Library state, with full metadata as fallback. Add and Remove use the existing repository/Core actions. The membership label updates while Details remains open, and the focused action stays in place. The emulator check restored the original Add-to-Library state after exercising add and remove.
+- Initial focus is the Library action, with visible Back as the fallback. The focused TV Material action has the standard strong focus indication; Library membership is communicated by label/icon without a persistent second focus border.
+
+Runtime results on the final APK (1920×1080 physical pixels at 320 dpi = 960×540 dp): a clean force-stop/relaunch resumed `TvActivity`; no app-process startup ANR recurred. Home opened Silo Details immediately from preview and enriched to its real background, 2023–, 51 min, Series, synopsis, and available metadata. Discover opened Unabomber with real background, release/runtime/type, synopsis, genres, director, and cast. The title remained visible during enrichment. The focus remained on the Library action as its Add/Remove state changed. Ordinary Details content fit without scrolling. No natural MetaDetails failure occurred to exercise the inline error state; the exception/error branch retains the preview in source, but no dedicated UI error test or forced network-error run was performed.
+
+Route returns on the final APK: Home → Details → Home returned to the exact Silo Continue Watching item; Discover → Details → Discover returned to the exact Unabomber result; Library → Details → Library returned to the exact Silo card and grid position; Search → a real result → Details → Search returned to the exact first result card and its row position. The earlier Library action check removed For All Mankind from the current Continue Watching feed as a side effect, so the Home route check was repeated on the still-present Silo item. The 30-second Details idle check did not show a spontaneous route or focus change. Filtered final logcat contained no app-process ANR, `FocusRelatedWarning`, `FocusRequester`, AndroidRuntime/FATAL, or Compose exception.
+
+The series audit opened the real Silo series through `MetaDetails`. The pinned generated Core `MetaItem` exposes `videos`; each `Video` can carry id/title/released/overview/thumbnail/streams and `seriesInfo` season/episode, upcoming, watched, current-video, and progress fields. The Phase 5A TV Details presentation intentionally does not render or request episode streams, and its runtime UI does not expose the Core video count/current-video/watch-state values. Record those values from a Core-backed series fixture or targeted 5B instrumentation before choosing season grouping and resume behavior; no episode list or season count is claimed here.
+
+Ten new pure tests raise the suite from 75 to 85: Details merge/enrichment and preview retention; partial-link preservation; artwork classification for all four modes; factual metadata formatting; exact type:id Library membership including stale-preview override; exhaustive Home/Discover/Library/Search route-origin support; and preview presence during loading. `:app:compileDebugKotlin`, `:app:assembleDebug`, and `:app:testDebugUnitTest` all passed (85 tests, 0 failures). No Gradle stall reproduced. The installed APK is `app/build/outputs/apk/debug/app-arm64-v8a-debug.apk`; the final rebuilt APK was installed with `adb install -r` and app data was preserved. Screenshots remain outside Git at `/private/tmp/stremio-android-tv-phase5a/`: `06-final-enriched-details.png`, `10-library-add.png`, `11-library-restored.png`, `14-details-from-discover.png`, `15-discover-return.png`, `18-details-from-library.png`, `19-library-return.png`, `23-details-from-search.png`, `24-search-return.png`, `26-details-from-home.png`, `27-home-return.png`, and the final-source screenshots `29-final-source-preview-details.png`, `30-final-source-enriched-details.png`, and `31-final-source-details-idle-30s.png`.
+
+Known runtime coverage gaps: no real TextOnly or portrait-only no-background catalog item was available in the exercised items; pure tests cover those artwork policies. No real metadata error occurred. Video field values/counts were not observable from the TV UI and remain a Phase 5B audit item. Episodes, streams, player, Smart Playback, and Skip Segments are not implemented.
+
 ## Runtime verification gates
 
 Navigation:
@@ -528,7 +547,7 @@ Before commit:
 
 ## Current next gate
 
-Phase 4B production TV Discover is implemented, tested, built, and runtime-reviewed above. The shell now has real Home, Discover, and Search destinations. Library remains unimplemented and must not appear as a placeholder. Continue with future browse, Details/episode/stream, or playback milestones only as separately scoped work; Smart Playback remains its own staged track.
+Phase 5A production TV Details is implemented, tested, built, and runtime-reviewed above. The shell has real Home, Discover, Library, and Search destinations with route-origin return. The next milestone is Phase 5B: audit real `MetaDetails.videos` values on a Core-backed series, then build episode browsing with loss-minimal Video-to-presentation mapping. Do not request episode streams until that browse state and interaction are stable. Streams and playback follow later; Smart Playback and Skip Segments remain separate future tracks.
 
 The Phase 3B late Home catalog emission remains a watch item. This phase did not stage a controlled late Home emission, and the historical focus warning remains a watch item because it has not reproduced. Continue observing normal asynchronous catalog arrivals in future runtime checks.
 

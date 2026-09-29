@@ -68,6 +68,73 @@ fun com.stremio.core.types.resource.MetaItemPreview.toCatalogItem(
     ),
 )
 
+/** Merge full Core metadata into the already visible preview without dropping preview-only state. */
+fun mergeDetailsPreview(
+    preview: CatalogItem,
+    full: com.stremio.core.types.resource.MetaItem,
+): CatalogItem {
+    // A stale or mismatched MetaDetails emission must never change the route's semantic identity.
+    if (full.id != preview.id || full.type != preview.type) return preview
+
+    return preview.copy(
+        name = full.name.takeIf { it.isNotBlank() } ?: preview.name,
+        poster = full.poster?.takeIf { it.isNotBlank() } ?: preview.poster,
+        background = full.background?.takeIf { it.isNotBlank() } ?: preview.background,
+        releaseInfo = full.releaseInfo?.takeIf { it.isNotBlank() } ?: preview.releaseInfo,
+        progress = full.progress?.toFloat() ?: preview.progress,
+        posterShape = when (full.posterShape) {
+            com.stremio.core.types.resource.PosterShape.POSTER -> CatalogPosterShape.Poster
+            com.stremio.core.types.resource.PosterShape.LANDSCAPE -> CatalogPosterShape.Landscape
+            com.stremio.core.types.resource.PosterShape.SQUARE -> CatalogPosterShape.Square
+            else -> preview.posterShape
+        },
+        logo = full.logo?.takeIf { it.isNotBlank() } ?: preview.logo,
+        description = full.description?.takeIf { it.isNotBlank() } ?: preview.description,
+        runtime = full.runtime?.takeIf { it.isNotBlank() } ?: preview.runtime,
+        released = full.released?.toCoreTimestamp() ?: preview.released,
+        links = (
+            full.links.map { CatalogLink(name = it.name, category = it.category, url = it.url) } + preview.links
+        ).distinctBy { "${it.category.lowercase()}\u0000${it.name.lowercase()}" },
+        inLibrary = full.inLibrary,
+        watched = full.watched,
+        behaviorHints = CatalogBehaviorHints(
+            defaultVideoId = full.behaviorHints.defaultVideoId ?: preview.behaviorHints.defaultVideoId,
+            featuredVideoId = full.behaviorHints.featuredVideoId ?: preview.behaviorHints.featuredVideoId,
+            hasScheduledVideos = full.behaviorHints.hasScheduledVideos,
+        ),
+        // These values are supplied by other presentation paths rather than MetaItem.
+        imdbRating = preview.imdbRating,
+        inCinema = preview.inCinema,
+        remainingEpisodes = preview.remainingEpisodes,
+        continueWatchingVideoId = preview.continueWatchingVideoId,
+        isContinueWatching = preview.isContinueWatching,
+    )
+}
+
+fun com.stremio.core.types.resource.MetaItem.toMetaDetails(
+    preview: CatalogItem,
+    trailerUrl: String? = null,
+): MetaDetails {
+    val item = mergeDetailsPreview(preview, this)
+    fun linksIn(vararg categories: String) = item.links.asSequence()
+        .filter { link -> categories.any { it.equals(link.category, ignoreCase = true) } }
+        .map { it.name }
+        .filter(String::isNotBlank)
+        .distinct()
+        .toList()
+    return MetaDetails(
+        item = item,
+        description = item.description,
+        genres = linksIn("genre", "genres"),
+        cast = linksIn("cast", "actor").take(8),
+        director = linksIn("director", "directors").take(4),
+        runtime = item.runtime,
+        year = item.releaseInfo,
+        trailer = trailerUrl,
+        isLoading = false,
+    )
+}
+
 fun CatalogItem.toCoreMetaItemPreviewForLibrary(): com.stremio.core.types.resource.MetaItemPreview =
     com.stremio.core.types.resource.MetaItemPreview(
         id = id,

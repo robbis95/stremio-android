@@ -1,6 +1,6 @@
 import java.util.Properties
-import com.stremio.gradle.PrepareStreamServerArm64
-import com.stremio.gradle.VerifyArm64ApkPackaging
+import com.stremio.gradle.PrepareStreamServerJni
+import com.stremio.gradle.VerifyNativeApkPackaging
 
 plugins {
     id("com.android.application")
@@ -164,7 +164,8 @@ dependencies {
 }
 val streamServerRoot = rootProject.file("stream-server")
 val streamServerArm64Library = streamServerRoot.resolve("target/aarch64-linux-android/release/libstream_server.so")
-val nativeBuildScript = rootProject.file(".github/scripts/build-stream-server-android-arm64.sh")
+val streamServerArmV7Library = streamServerRoot.resolve("target/armv7-linux-androideabi/release/libstream_server.so")
+val nativeBuildScript = rootProject.file(".github/scripts/build-stream-server-android.sh")
 val configuredSdkDir = localProperties.getProperty("sdk.dir")?.let { file(it) }
 val configuredNdkHome = stringPropertyOrEnv("ANDROID_NDK_HOME")
     ?: stringPropertyOrEnv("ANDROID_NDK_ROOT")
@@ -183,14 +184,37 @@ tasks.register<Exec>("buildStreamServerArm64") {
     environment("VCPKG_ROOT", configuredVcpkgRoot)
     environment("VCPKG_INSTALLED_DIR", configuredVcpkgInstallDir)
     environment("STREAM_SERVER_ROOT", streamServerRoot.absolutePath)
+    environment("STREAM_SERVER_ABI", "arm64-v8a")
 }
 
-val prepareStreamServerArm64 = tasks.register<PrepareStreamServerArm64>("prepareStreamServerArm64") {
+tasks.register<Exec>("buildStreamServerArmV7") {
+    group = "native build"
+    description = "Builds the pinned libtorrent stream-server for Android armeabi-v7a."
+    commandLine("bash", nativeBuildScript.absolutePath)
+    environment("ANDROID_NDK_HOME", configuredNdkHome)
+    environment("VCPKG_ROOT", configuredVcpkgRoot)
+    environment("VCPKG_INSTALLED_DIR", stringPropertyOrEnv("VCPKG_INSTALLED_DIR_ARMV7")
+        ?: layout.buildDirectory.dir("vcpkg_installed_armv7").get().asFile.absolutePath)
+    environment("STREAM_SERVER_ROOT", streamServerRoot.absolutePath)
+    environment("STREAM_SERVER_ABI", "armeabi-v7a")
+}
+
+val prepareStreamServerArm64 = tasks.register<PrepareStreamServerJni>("prepareStreamServerArm64") {
     group = "native build"
     description = "Builds and stages the Android arm64-v8a stream-server JNI library under app/build."
     dependsOn("buildStreamServerArm64")
     nativeLibrary.set(streamServerArm64Library)
     outputDirectory.set(generatedStreamServerJniLibs)
+    abi.set("arm64-v8a")
+}
+
+val prepareStreamServerArmV7 = tasks.register<PrepareStreamServerJni>("prepareStreamServerArmV7") {
+    group = "native build"
+    description = "Builds and stages the Android armeabi-v7a stream-server JNI library under app/build."
+    dependsOn("buildStreamServerArmV7")
+    nativeLibrary.set(streamServerArmV7Library)
+    outputDirectory.set(generatedStreamServerJniLibs)
+    abi.set("armeabi-v7a")
 }
 
 val nativeTvTaskRequested = gradle.startParameter.taskNames.any { task ->
@@ -202,15 +226,39 @@ if (nativeTvTaskRequested) {
     }
 }
 
-tasks.register<VerifyArm64ApkPackaging>("verifyArm64StreamServerPackaging") {
+val nativeTvArmV7TaskRequested = gradle.startParameter.taskNames.any { task ->
+    task.substringAfterLast(':') in setOf("assembleTvArmV7Debug", "verifyArmV7StreamServerPackaging")
+} || findProperty("includeStreamServerArmV7") == "true"
+if (nativeTvArmV7TaskRequested) {
+    androidComponents.onVariants(androidComponents.selector().withName("debug")) { variant ->
+        variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareStreamServerArmV7) { it.outputDirectory }
+    }
+}
+
+tasks.register<VerifyNativeApkPackaging>("verifyArm64StreamServerPackaging") {
     group = "verification"
     description = "Inspects the arm64 debug APK ZIP for the stream-server and shared C++ runtime."
     dependsOn("assembleDebug")
     apkDirectory.set(layout.buildDirectory.dir("outputs/apk/debug"))
+    abi.set("arm64-v8a")
+}
+
+tasks.register<VerifyNativeApkPackaging>("verifyArmV7StreamServerPackaging") {
+    group = "verification"
+    description = "Inspects the armeabi-v7a debug APK ZIP for the stream-server and shared C++ runtime."
+    dependsOn("assembleDebug")
+    apkDirectory.set(layout.buildDirectory.dir("outputs/apk/debug"))
+    abi.set("armeabi-v7a")
 }
 
 tasks.register("assembleTvArm64Debug") {
     group = "build"
     description = "Builds, packages, and verifies the native-enabled ARM64 TV debug APK."
     dependsOn("verifyArm64StreamServerPackaging")
+}
+
+tasks.register("assembleTvArmV7Debug") {
+    group = "build"
+    description = "Builds, packages, and verifies the native-enabled ARMv7 TV debug APK."
+    dependsOn("verifyArmV7StreamServerPackaging")
 }

@@ -1,4 +1,4 @@
-name: Android TV Native ARM64 Debug APK
+name: Android TV Native Debug APK
 
 on:
   workflow_call:
@@ -12,9 +12,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  arm64-native-debug:
-    name: Build and verify ARM64 native debug APK
+  native-debug:
+    name: Build and verify ${{ matrix.name }} native debug APK
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ARM64
+            abi: arm64-v8a
+            rust-target: aarch64-linux-android
+            task: assembleTvArm64Debug
+            artifact: stremio-android-tv-arm64-native-debug
+            cache-path: app/build/vcpkg_installed_arm64
+            cache-key: android-vcpkg-arm64
+            install-dir: app/build/vcpkg_installed_arm64
+          - name: ARMv7
+            abi: armeabi-v7a
+            rust-target: armv7-linux-androideabi
+            task: assembleTvArmV7Debug
+            artifact: stremio-android-tv-armeabi-v7a-native-debug
+            cache-path: app/build/vcpkg_installed_armv7
+            cache-key: android-vcpkg-armv7
+            install-dir: app/build/vcpkg_installed_armv7
 
     steps:
       - name: Checkout
@@ -34,7 +54,7 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android
+          targets: ${{ matrix.rust-target }}
 
       - name: Install cargo-ndk
         run: cargo install cargo-ndk
@@ -56,22 +76,23 @@ jobs:
       - name: Cache Android ARM64 vcpkg dependencies
         uses: actions/cache@v4
         with:
-          path: app/build/vcpkg_installed_arm64
-          key: android-vcpkg-arm64-${{ hashFiles('stream-server/vcpkg.json') }}-84bab45
+          path: ${{ matrix.cache-path }}
+          key: ${{ matrix.cache-key }}-${{ hashFiles('stream-server/vcpkg.json') }}-84bab45
           restore-keys: |
-            android-vcpkg-arm64-${{ hashFiles('stream-server/vcpkg.json') }}-
+            ${{ matrix.cache-key }}-${{ hashFiles('stream-server/vcpkg.json') }}-
 
-      - name: Build ARM64 native debug APK and verify packaged libraries
-        run: bash ./gradlew :app:assembleTvArm64Debug --warning-mode all
+      - name: Build ${{ matrix.name }} native debug APK and verify packaged libraries
+        run: bash ./gradlew :app:${{ matrix.task }} --warning-mode all
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           VCPKG_ROOT: ${{ github.workspace }}/vcpkg
           VCPKG_INSTALLED_DIR_ARM64: ${{ github.workspace }}/app/build/vcpkg_installed_arm64
+          VCPKG_INSTALLED_DIR_ARMV7: ${{ github.workspace }}/${{ matrix.install-dir }}
 
-      - name: Upload ARM64 TV debug APK
+      - name: Upload ${{ matrix.name }} TV debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: stremio-android-tv-arm64-native-debug
-          path: app/build/outputs/apk/debug/*arm64-v8a*debug.apk
+          name: ${{ matrix.artifact }}
+          path: app/build/outputs/apk/debug/*${{ matrix.abi }}*debug.apk
           if-no-files-found: error
           retention-days: 14

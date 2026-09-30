@@ -39,6 +39,89 @@ internal class TvStreamPrefetchCache {
     fun clear(): TvStreamPrefetchRequest? = request.also { request = null }
 }
 
+internal enum class TvNextEpisodeTrigger { Manual, Automatic }
+internal enum class TvNextEpisodeDiscovery { Prefetched, Live }
+
+/** DEBUG trace for one old-attempt -> next-attempt episode transition. */
+internal data class TvEpisodeTransitionTrace(
+    val oldAttemptId: String,
+    val targetVideoId: String,
+    val targetKey: String,
+    val trigger: TvNextEpisodeTrigger,
+    val triggerNanos: Long,
+    val discovery: TvNextEpisodeDiscovery? = null,
+    val optionReadyNanos: Long? = null,
+    val commitNanos: Long? = null,
+    val newAttemptId: String? = null,
+    val sourceActivatedNanos: Long? = null,
+    val firstVisualNanos: Long? = null,
+)
+
+/** A trace doubles as the commit gate: no Core mutation before a usable option is selected. */
+internal class TvEpisodeTransitionTracker {
+    var trace: TvEpisodeTransitionTrace? = null
+        private set
+
+    fun prepare(
+        oldAttemptId: String,
+        targetVideoId: String,
+        targetKey: String,
+        trigger: TvNextEpisodeTrigger,
+        atNanos: Long,
+    ): TvEpisodeTransitionTrace? {
+        if (trace != null) return null
+        return TvEpisodeTransitionTrace(oldAttemptId, targetVideoId, targetKey, trigger, atNanos)
+            .also { trace = it }
+    }
+
+    fun optionReady(
+        oldAttemptId: String,
+        targetVideoId: String,
+        targetKey: String,
+        discovery: TvNextEpisodeDiscovery,
+        hasUsableOption: Boolean,
+        atNanos: Long,
+    ): TvEpisodeTransitionTrace? {
+        val current = trace ?: return null
+        if (current.oldAttemptId != oldAttemptId || current.targetVideoId != targetVideoId ||
+            current.targetKey != targetKey || current.optionReadyNanos != null || !hasUsableOption
+        ) return null
+        return current.copy(discovery = discovery, optionReadyNanos = atNanos).also { trace = it }
+    }
+
+    fun commit(
+        oldAttemptId: String,
+        currentAttemptId: String?,
+        targetVideoId: String,
+        currentVideoId: String?,
+        targetKey: String,
+        hasUsableOption: Boolean,
+        atNanos: Long,
+    ): TvEpisodeTransitionTrace? {
+        val current = trace ?: return null
+        if (current.oldAttemptId != oldAttemptId || currentAttemptId != oldAttemptId ||
+            current.targetVideoId != targetVideoId || currentVideoId != targetVideoId ||
+            current.targetKey != targetKey || current.optionReadyNanos == null || !hasUsableOption ||
+            current.commitNanos != null
+        ) return null
+        return current.copy(commitNanos = atNanos).also { trace = it }
+    }
+
+    fun sourceActivated(oldAttemptId: String, newAttemptId: String, atNanos: Long): TvEpisodeTransitionTrace? {
+        val current = trace ?: return null
+        if (current.oldAttemptId != oldAttemptId || current.commitNanos == null || current.newAttemptId != null) return null
+        return current.copy(newAttemptId = newAttemptId, sourceActivatedNanos = atNanos).also { trace = it }
+    }
+
+    fun firstVisual(newAttemptId: String, atNanos: Long): TvEpisodeTransitionTrace? {
+        val current = trace ?: return null
+        if (current.newAttemptId != newAttemptId || current.sourceActivatedNanos == null || current.firstVisualNanos != null) return null
+        return current.copy(firstVisualNanos = atNanos).also { trace = it }
+    }
+
+    fun reset() { trace = null }
+}
+
 internal data class TvStreamTarget(
     val contentType: String,
     val contentId: String,

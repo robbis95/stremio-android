@@ -23,6 +23,63 @@ import org.junit.Test
 import kotlinx.coroutines.runBlocking
 
 class TvStreamSelectionTest {
+    @Test fun `next episode cannot commit before usable option is ready`() {
+        val gate = TvEpisodeTransitionTracker()
+        gate.prepare("old", "episode-2", "series:show:episode-2", TvNextEpisodeTrigger.Manual, 10L)
+
+        assertNull(gate.optionReady("old", "episode-2", "series:show:episode-2", TvNextEpisodeDiscovery.Live, false, 20L))
+        assertNull(gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", true, 30L))
+        assertNull(gate.trace!!.commitNanos)
+    }
+
+    @Test fun `failed discovery does not commit`() {
+        val gate = TvEpisodeTransitionTracker()
+        gate.prepare("old", "episode-2", "series:show:episode-2", TvNextEpisodeTrigger.Automatic, 10L)
+
+        // Empty/failing discovery cannot mark a usable option ready.
+        assertNull(gate.optionReady("old", "episode-2", "series:show:episode-2", TvNextEpisodeDiscovery.Live, false, 20L))
+        assertNull(gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", false, 30L))
+        assertNull(gate.trace!!.commitNanos)
+    }
+
+    @Test fun `commit succeeds once and requires the current exact old attempt and video`() {
+        val gate = preparedTransition(TvNextEpisodeDiscovery.Live)
+
+        assertNull(gate.commit("old", "stale-old", "episode-2", "episode-2", "series:show:episode-2", true, 30L))
+        assertNull(gate.commit("old", "old", "episode-2", "episode-3", "series:show:episode-2", true, 31L))
+        assertEquals(40L, gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", true, 40L)!!.commitNanos)
+        assertNull(gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", true, 50L))
+    }
+
+    @Test fun `prefetched hit and live fallback share the same commit path`() {
+        listOf(TvNextEpisodeDiscovery.Prefetched, TvNextEpisodeDiscovery.Live).forEach { discovery ->
+            val gate = preparedTransition(discovery)
+            val committed = gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", true, 30L)
+            assertEquals(discovery, committed!!.discovery)
+            assertEquals(30L, committed.commitNanos)
+        }
+    }
+
+    @Test fun `transition timing is paired to its own old and new attempts`() {
+        val gate = preparedTransition(TvNextEpisodeDiscovery.Prefetched)
+        gate.commit("old", "old", "episode-2", "episode-2", "series:show:episode-2", true, 30L)
+
+        assertNull(gate.sourceActivated("old-a", "new-wrong", 40L))
+        val activated = gate.sourceActivated("old", "new-a", 40_000_000L)!!
+        assertEquals("old", activated.oldAttemptId)
+        assertEquals("new-a", activated.newAttemptId)
+        assertNull(gate.firstVisual("new-b", 60_000_000L))
+        val visual = gate.firstVisual("new-a", 70_000_000L)!!
+        assertEquals(30L, visual.sourceActivatedNanos?.let { (visual.firstVisualNanos!! - it) / 1_000_000L })
+        assertEquals(70_000_000L, visual.firstVisualNanos)
+    }
+
+    private fun preparedTransition(discovery: TvNextEpisodeDiscovery): TvEpisodeTransitionTracker =
+        TvEpisodeTransitionTracker().also { gate ->
+            gate.prepare("old", "episode-2", "series:show:episode-2", TvNextEpisodeTrigger.Manual, 10L)
+            gate.optionReady("old", "episode-2", "series:show:episode-2", discovery, true, 20L)
+        }
+
     @Test fun `completed prefetch is an immediate cache hit for its attempt and exact target`() = runBlocking {
         val cache = TvStreamPrefetchCache()
         val request = cache.begin("attempt-1", "series:show:episode-2", 10L)

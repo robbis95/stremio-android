@@ -46,6 +46,10 @@ import com.stremio.mobile.presentation.tv.TvStreamTarget
 import com.stremio.mobile.presentation.tv.TvStreamSelectionUiState
 import com.stremio.mobile.presentation.tv.TvStreamPrefetchCache
 import com.stremio.mobile.presentation.tv.TvStreamPrefetchRequest
+import com.stremio.mobile.presentation.tv.TvEpisodeTransitionTracker
+import com.stremio.mobile.presentation.tv.TvNextEpisodeTrigger
+import com.stremio.mobile.presentation.tv.TvNextEpisodeDiscovery
+import com.stremio.mobile.presentation.tv.TvEpisodeTransitionTrace
 import com.stremio.mobile.presentation.tv.TvPlaybackUiState
 import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
 import com.stremio.mobile.presentation.tv.TvPlaybackStage
@@ -167,6 +171,7 @@ class MainViewModel(
     private var tvStreamsJob: Job? = null
     private var tvNextEpisodeJob: Job? = null
     private val tvNextEpisodePrefetch = TvStreamPrefetchCache()
+    private val tvEpisodeTransition = TvEpisodeTransitionTracker()
     private var tvNextVideoAttemptId: String? = null
     private var tvNextVideo: com.stremio.core.types.resource.Video? = null
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
@@ -2116,6 +2121,14 @@ class MainViewModel(
         val requestedEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
         val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
+        tvEpisodeTransition.trace?.let { transition ->
+            if (transition.targetKey == target.semanticTargetKey) {
+                tvEpisodeTransition.sourceActivated(transition.oldAttemptId, attempt.attemptId, attempt.startedAtNanos)
+                    ?.let(::logTvEpisodeTransition)
+            } else {
+                tvEpisodeTransition.reset()
+            }
+        }
         val selectedState = _tvStreamSelection.value
         if (selectedState.target?.semanticTargetKey == target.semanticTargetKey) {
             _tvStreamSelection.value = selectedState.copy(selectedStreamKey = option.semanticKey)
@@ -2306,6 +2319,11 @@ class MainViewModel(
                     current.option ?: return,
                 )
                 Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "first-visual", actualEngine, timing, event.signalKind))
+                timing.firstVisualSignalNanos?.let { tvEpisodeTransition.firstVisual(attempt.attemptId, it) }
+                    ?.let { trace ->
+                        logTvEpisodeTransition(trace)
+                        tvEpisodeTransition.reset()
+                    }
             }
             is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", event.category)
         }
@@ -2515,7 +2533,14 @@ class MainViewModel(
         }
         val parentTarget = current.attempt?.target ?: return
         val target = nextEpisodeTarget(parentTarget, next)
-        playbackRepository.reportNextVideo()
+        val prepared = tvEpisodeTransition.prepare(
+            oldAttemptId = attemptId,
+            targetVideoId = next.id,
+            targetKey = target.semanticTargetKey,
+            trigger = if (automatic) TvNextEpisodeTrigger.Automatic else TvNextEpisodeTrigger.Manual,
+            atNanos = SystemClock.elapsedRealtimeNanos(),
+        ) ?: return
+        logTvEpisodeTransition(prepared)
         _tvPlayback.value = current.copy(nextEpisode = transition)
         tvNextEpisodeJob?.cancel()
         tvNextEpisodeJob = viewModelScope.launch {
@@ -2549,6 +2574,7 @@ class MainViewModel(
                         error = "No playable sources were found for ${target.episodeLabel ?: "the next episode"}.",
                     ))
                 }
+                tvEpisodeTransition.reset()
                 return@launch
             }
             val previousOption = current.option
@@ -2559,10 +2585,60 @@ class MainViewModel(
                     transition = TvNextEpisodeTransition.Failed,
                     error = "No playable sources were found for ${target.episodeLabel ?: "the next episode"}.",
                 ))
+                tvEpisodeTransition.reset()
                 return@launch
             }
-            if (isCurrentTvAttempt(_tvPlayback.value, attemptId)) startTvPlayback(target, option)
+            val discovery = if (prefetched != null && !resolvedOptions.isNullOrEmpty()) {
+                TvNextEpisodeDiscovery.Prefetched
+            } else TvNextEpisodeDiscovery.Live
+            val readyAt = SystemClock.elapsedRealtimeNanos()
+            val ready = tvEpisodeTransition.optionReady(
+                oldAttemptId = attemptId,
+                targetVideoId = target.videoId.orEmpty(),
+                targetKey = target.semanticTargetKey,
+                discovery = discovery,
+                hasUsableOption = true,
+                atNanos = readyAt,
+            ) ?: return@launch
+            logTvEpisodeTransition(ready)
+            val latest = _tvPlayback.value
+            val currentCoreNextId = playbackRepository.getNextVideo()?.id
+            val committed = tvEpisodeTransition.commit(
+                oldAttemptId = attemptId,
+                currentAttemptId = latest.attempt?.attemptId.takeIf { isCurrentTvAttempt(latest, attemptId) },
+                targetVideoId = target.videoId.orEmpty(),
+                currentVideoId = tvNextVideo?.id?.takeIf {
+                    tvNextVideoAttemptId == attemptId && currentCoreNextId == it
+                },
+                targetKey = target.semanticTargetKey,
+                hasUsableOption = true,
+                atNanos = SystemClock.elapsedRealtimeNanos(),
+            )
+            if (committed == null) {
+                tvEpisodeTransition.reset()
+                return@launch
+            }
+            logTvEpisodeTransition(committed)
+            // Core mutates the current LibraryItem and emits next-video before Player.Load.
+            playbackRepository.reportNextVideo()
+            startTvPlayback(target, option)
         }
+    }
+
+    private fun logTvEpisodeTransition(trace: TvEpisodeTransitionTrace) {
+        if (!BuildConfig.DEBUG) return
+        fun elapsed(start: Long, end: Long?): String = end?.let { "${(it - start) / 1_000_000L}ms" } ?: "pending"
+        val source = trace.discovery?.name?.lowercase() ?: "pending"
+        val ready = trace.optionReadyNanos?.let { "${(it - trace.triggerNanos) / 1_000_000L}ms" } ?: "pending"
+        val triggerToCommit = elapsed(trace.triggerNanos, trace.commitNanos)
+        val triggerToActivation = elapsed(trace.triggerNanos, trace.sourceActivatedNanos)
+        val commitToActivation = trace.commitNanos?.let { elapsed(it, trace.sourceActivatedNanos) } ?: "pending"
+        val commitToVisual = if (trace.commitNanos != null) elapsed(trace.commitNanos, trace.firstVisualNanos) else "pending"
+        val triggerToVisual = elapsed(trace.triggerNanos, trace.firstVisualNanos)
+        Log.d(
+            "TvEpisodeTransition",
+            "oldAttempt=${trace.oldAttemptId} newAttempt=${trace.newAttemptId ?: "pending"} trigger=${trace.trigger.name.lowercase()} discovery=$source optionReadyMs=$ready triggerToCommitMs=$triggerToCommit triggerToSourceActivationMs=$triggerToActivation commitToSourceActivationMs=$commitToActivation commitToFirstVisualMs=$commitToVisual triggerToFirstVisualMs=$triggerToVisual",
+        )
     }
 
     private var lastTvTimeReportNanos = 0L
@@ -2570,6 +2646,7 @@ class MainViewModel(
     private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
         _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
+        tvEpisodeTransition.reset()
         Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
     }
 
@@ -2611,6 +2688,7 @@ class MainViewModel(
 
     internal fun closeTvPlayback() {
         cancelTvNextEpisodePrefetch("playback-closed")
+        tvEpisodeTransition.reset()
         val state = _tvPlayback.value
         state.attempt?.let { attempt ->
             reportTvFinalProgress(state)

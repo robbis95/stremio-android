@@ -484,6 +484,12 @@ The trace scan found no `http://`, `https://`, `magnet:`, `token=`, or `auth` st
 
 Screenshots are outside Git under `/private/tmp/` with `pe0-` prefixes (Home, Details, Streams, Starting, natural Error, fixed focus, Torrent list/Starting, canceled Streams, and restored Details). PE0 remains open: no real stream reached a genuine first visual, so the visual, successful progress, control, and stable-playback baseline is incomplete. Do not begin PE1 until a Direct or Torrent run reaches the required first-visual signal and Back/progress behavior is verified.
 
+#### PE0.2 runtime continuation — 2026-09-30 (PE0 remains open)
+
+A clean launch retained the authenticated Home session. The manually focused `Torrentio` filter showed a 1080p Torrent with 809 seeds for Silo S2E7; Center explicitly activated that row and the Player Starting screen appeared. No Smart ranking or automatic source selection was used. This continuation did not reach a log-verifiable Core or engine stage: ADB detached after activation and `adb devices -l` returned no devices. The existing `Television_1080p` AVD remained listed as stopped in Device Manager. Launching that profile from Android Studio did not reconnect ADB; direct launch exited with status 134 and `Incompatible processor ... Qt build requires ... neon` on the arm64 host. This is an emulator startup/transport boundary, not evidence of a playback failure in the app.
+
+No logs from the activated attempt were available after ADB detached, so current-run JNI/server state, `/settings`, Core conversion, player load, Exo preparation, progress callbacks, and privacy-log audit are unverified. The visible Player Starting screen is not a first-frame success. No `ExoRenderedFirstFrame`, moving video, audio, controls, seeks/reportSeek, post-first-frame progress cadence, 30-second stability, Back finalization, or route restoration was verified. PE0 remains open and PE1 remains blocked. Next step: restore a compatible running `Television_1080p` AVD/ADB connection and repeat the manual S2E7 Torrent gate; no source or native changes are indicated by this interrupted run.
+
 ### PE1 — Core Skip Segments POC
 - expose Core `introOutro` through the existing Android playback state/repository path if not already surfaced
 - normalized segment domain model

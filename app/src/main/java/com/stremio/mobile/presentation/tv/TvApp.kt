@@ -35,6 +35,7 @@ internal fun TvApp(viewModel: MainViewModel) {
     val detailsUiState by viewModel.tvDetailsUiState.collectAsStateWithLifecycle()
     val streamUiState by viewModel.tvStreamSelection.collectAsStateWithLifecycle()
     val tvPlaybackState by viewModel.tvPlayback.collectAsStateWithLifecycle()
+    val profileSettings by viewModel.tvProfileSettings.collectAsStateWithLifecycle()
     val tvLinkState by viewModel.tvAccountLink.collectAsStateWithLifecycle()
     val isRestoring by viewModel.sessionRestoring.collectAsStateWithLifecycle()
     val isBoardLoading by viewModel.tvBoardLoading.collectAsStateWithLifecycle()
@@ -289,6 +290,9 @@ internal fun TvApp(viewModel: MainViewModel) {
                         )
                     }
                     if (route == TvRoute.Player) {
+                        var subtitleStyle by remember(tvPlaybackState.playbackAttemptId, profileSettings) {
+                            mutableStateOf(viewModel.tvSubtitleStyle())
+                        }
                         TvPlayerScreen(
                             state = tvPlaybackState,
                             player = viewModel.tvPlaybackPlayer(),
@@ -308,6 +312,11 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onSubtitlesDisabled = {
                                 viewModel.tvPlaybackPlayer()?.disableSubtitles()
                                 viewModel.rememberSubtitlesDisabled()
+                            },
+                            subtitleStyle = subtitleStyle,
+                            onSubtitleStyleChanged = { style ->
+                                subtitleStyle = style
+                                viewModel.rememberTvSubtitleStyle(style)
                             },
                             onBack = {
                                 viewModel.closeTvPlayback()

@@ -40,6 +40,7 @@ import com.stremio.mobile.player.PlayerPlaybackEvent
 import com.stremio.mobile.player.PlayerRuntimeState
 import com.stremio.mobile.player.PlayerTrackOption
 import com.stremio.mobile.player.PlayerTrackType
+import com.stremio.mobile.player.PlayerSubtitleStyle
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvTheme
 import kotlinx.coroutines.delay
@@ -107,6 +108,7 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
     var inPlayer by remember { mutableStateOf(false) }
     var player by remember { mutableStateOf<Player?>(null) }
     var playbackState by remember { mutableStateOf(labState(preset, 120_000L, SIM_DURATION_MS, 600_000L)) }
+    var subtitleStyle by remember { mutableStateOf(PlayerSubtitleStyle()) }
     val simulatedRuntime = remember { MutableStateFlow(PlayerRuntimeState()) }
     val runtime by (player?.runtimeState ?: simulatedRuntime).collectAsState(
         initial = PlayerRuntimeState(),
@@ -218,6 +220,8 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                     it.copy(subtitleTracks = it.subtitleTracks.map { option -> option.copy(selected = false) }, subtitlesDisabled = true)
                 }
             },
+            subtitleStyle = subtitleStyle,
+            onSubtitleStyleChanged = { subtitleStyle = it },
             onRetry = {
                 if (mode == LabMode.RealMedia) {
                     player?.retry()

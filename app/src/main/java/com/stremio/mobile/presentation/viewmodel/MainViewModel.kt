@@ -83,6 +83,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -184,6 +185,7 @@ class MainViewModel(
     private val libraryPageRequests = LibraryPageRequestTracker()
     private val isDiscoverSeeAll = MutableStateFlow(false)
     private val profileSettings = MutableStateFlow<com.stremio.core.types.profile.Profile.Settings?>(null)
+    internal val tvProfileSettings: StateFlow<com.stremio.core.types.profile.Profile.Settings?> = profileSettings.asStateFlow()
     private val serverSettings = MutableStateFlow<com.stremio.core.models.StreamingServer.Settings?>(null)
     private val isAutoStartOnBoot = MutableStateFlow(authRepository.isAutoStartOnBoot())
     private val isServerInForeground = MutableStateFlow(authRepository.isServerInForeground())
@@ -2201,6 +2203,32 @@ class MainViewModel(
     }
 
     internal fun tvPlaybackPlayer() = playbackRepository.getPlayer()
+
+    internal fun tvSubtitleStyle(): PlayerSubtitleStyle {
+        val settings = profileSettings.value
+        val (savedSize, savedOffset) = playbackRepository.getSubtitlePrefs()
+        val streamState = playbackRepository.getPlayerStreamState()
+        return PlayerSubtitleStyle(
+            sizePercent = streamState?.subtitleSize?.roundToInt() ?: settings?.subtitlesSize ?: savedSize,
+            offsetPercent = streamState?.subtitleOffset?.roundToInt() ?: settings?.subtitlesOffset ?: savedOffset,
+            delayMs = streamState?.subtitleDelay ?: 0L,
+            textColor = settings?.subtitlesTextColor ?: "#FFFFFF",
+            backgroundColor = settings?.subtitlesBackgroundColor ?: "#00000000",
+            outlineColor = settings?.subtitlesOutlineColor ?: "#000000",
+            assStyling = settings?.assSubtitlesStyling ?: true,
+        )
+    }
+
+    internal fun rememberTvSubtitleStyle(style: PlayerSubtitleStyle) {
+        playbackRepository.rememberSubtitleStyle(style)
+        val current = profileSettings.value ?: return
+        val updated = current.copy(
+            subtitlesTextColor = style.textColor,
+            subtitlesBackgroundColor = style.backgroundColor,
+            subtitlesOutlineColor = style.outlineColor,
+        )
+        if (updated != current) updateProfileSettings(updated)
+    }
 
     internal fun tvSeekDurationMs(): Long = profileSettings.value?.seekTimeDuration ?: 10_000L
 

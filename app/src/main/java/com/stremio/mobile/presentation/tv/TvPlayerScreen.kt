@@ -77,11 +77,26 @@ import com.stremio.mobile.player.PlayerTrackOption
 import com.stremio.mobile.data.model.tvIntroSkipTarget
 import com.stremio.mobile.data.model.tvOutroSkipTarget
 import com.stremio.mobile.player.Player
+import com.stremio.mobile.player.PlayerSubtitleStyle
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import kotlinx.coroutines.delay
 
 private enum class TvPlayerControl { Rewind, PlayPause, Forward, SkipIntro, SkipOutro, Audio, Subtitles }
 private enum class TvTrackPanel { Audio, Subtitles }
+private enum class TvSubtitleAppearanceItem { Size, Position, TextColor, BackgroundColor, OutlineColor }
+
+private val tvSubtitleSizePresets = listOf(75, 85, 100, 115, 130, 150)
+private val tvSubtitleOffsetPresets = listOf(0, 20, 40, 60, 80, 100)
+private val tvSubtitleColors = listOf(
+    "#FFFFFF" to "White",
+    "#FFFF00" to "Yellow",
+    "#00FFFF" to "Cyan",
+    "#FF00FF" to "Magenta",
+    "#00FF00" to "Green",
+    "#FF0000" to "Red",
+    "#000000" to "Black",
+)
+private val tvSubtitleBackgroundColors = listOf("#00000000" to "Transparent") + tvSubtitleColors
 
 @Composable
 internal fun TvPlayerScreen(
@@ -96,11 +111,14 @@ internal fun TvPlayerScreen(
     onAudioTrackSelected: (PlayerTrackOption) -> Unit,
     onSubtitleTrackSelected: (PlayerTrackOption) -> Unit,
     onSubtitlesDisabled: () -> Unit,
+    subtitleStyle: PlayerSubtitleStyle = PlayerSubtitleStyle(),
+    onSubtitleStyleChanged: (PlayerSubtitleStyle) -> Unit = {},
 ) {
     var controlsVisible by remember(state.playbackAttemptId) { mutableStateOf(true) }
     var controlsActivity by remember(state.playbackAttemptId) { mutableIntStateOf(0) }
     var lastFocusedControl by remember(state.playbackAttemptId) { mutableStateOf(TvPlayerControl.PlayPause) }
     var trackPanel by remember(state.playbackAttemptId) { mutableStateOf<TvTrackPanel?>(null) }
+    var showSubtitleAppearance by remember(state.playbackAttemptId) { mutableStateOf(false) }
     val rewindRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val playPauseRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val forwardRequester = remember(state.playbackAttemptId) { FocusRequester() }
@@ -111,19 +129,30 @@ internal fun TvPlayerScreen(
     val rootRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val audioRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val subtitlesRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val appearanceRequester = remember(state.playbackAttemptId) { FocusRequester() }
 
-    BackHandler(enabled = trackPanel != null) {
-        trackPanel = null
-        controlsVisible = true
-        runCatching {
-            (if (lastFocusedControl == TvPlayerControl.Audio) audioRequester else subtitlesRequester).requestFocus()
+    BackHandler(enabled = trackPanel != null || showSubtitleAppearance) {
+        if (showSubtitleAppearance) {
+            showSubtitleAppearance = false
+            runCatching { appearanceRequester.requestFocus() }
+        } else {
+            trackPanel = null
+            controlsVisible = true
+            runCatching {
+                (if (lastFocusedControl == TvPlayerControl.Audio) audioRequester else subtitlesRequester).requestFocus()
+            }
         }
     }
 
     fun closeTrackPanel(panel: TvTrackPanel) {
+        showSubtitleAppearance = false
         trackPanel = null
         controlsVisible = true
         runCatching { (if (panel == TvTrackPanel.Audio) audioRequester else subtitlesRequester).requestFocus() }
+    }
+
+    LaunchedEffect(player, subtitleStyle) {
+        player?.setSubtitleStyle(subtitleStyle)
     }
 
     LaunchedEffect(state.stage, state.runtime.isPlaying, state.isBuffering, controlsVisible, controlsActivity, trackPanel) {
@@ -248,6 +277,16 @@ internal fun TvPlayerScreen(
                 onSelectAudio = { track -> onAudioTrackSelected(track); closeTrackPanel(panel) },
                 onSelectSubtitle = { track -> onSubtitleTrackSelected(track); closeTrackPanel(panel) },
                 onDisableSubtitles = { onSubtitlesDisabled(); closeTrackPanel(panel) },
+                onOpenAppearance = { showSubtitleAppearance = true },
+                appearanceRequester = appearanceRequester,
+            )
+        }
+
+        if (trackPanel == TvTrackPanel.Subtitles && showSubtitleAppearance) {
+            TvSubtitleAppearancePanel(
+                style = subtitleStyle,
+                onStyleChanged = onSubtitleStyleChanged,
+                onDismiss = { showSubtitleAppearance = false; runCatching { appearanceRequester.requestFocus() } },
             )
         }
 
@@ -428,6 +467,8 @@ private fun TvTrackSelectionPanel(
     onSelectAudio: (PlayerTrackOption) -> Unit,
     onSelectSubtitle: (PlayerTrackOption) -> Unit,
     onDisableSubtitles: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    appearanceRequester: FocusRequester,
 ) {
     val rows = buildList {
         if (panel == TvTrackPanel.Subtitles) add(TvTrackRow("off", "Off", "No subtitles", subtitlesDisabled))
@@ -471,6 +512,15 @@ private fun TvTrackSelectionPanel(
                     )
                 }
             }
+            if (panel == TvTrackPanel.Subtitles) {
+                Spacer(Modifier.height(10.dp))
+                TvTrackRowItem(
+                    row = TvTrackRow("appearance", "Appearance", "Size, position, and colors", false),
+                    requester = appearanceRequester,
+                    onSelect = onOpenAppearance,
+                    onBack = onDismiss,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             Text("↑  ↓  Browse     OK  Select     Back  Close", color = TvColors.mediaSecondary, style = MaterialTheme.typography.labelMedium)
         }
@@ -508,9 +558,115 @@ private fun TvTrackRowItem(row: TvTrackRow, requester: FocusRequester?, onSelect
 private fun trackSummary(track: PlayerTrackOption): String = track.language?.takeIf(String::isNotBlank) ?: track.label
 
 private fun subtitleOriginLabel(track: PlayerTrackOption): String = when {
-    track.origin.equals("EXTERNAL", true) || track.origin.equals("ADDON", true) || !track.embedded -> "Add-on"
-    track.origin.equals("LOCAL", true) || track.local -> "Local"
-    else -> "On this video"
+    track.local || track.origin.equals("LOCAL", true) -> "Local"
+    track.origin.equals("EXTERNAL", true) || track.origin.equals("ADDON", true) || track.addonSubtitleId != null || !track.embedded -> "Add-on"
+    else -> "Embedded"
+}
+
+@Composable
+private fun TvSubtitleAppearancePanel(
+    style: PlayerSubtitleStyle,
+    onStyleChanged: (PlayerSubtitleStyle) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val requesters = remember { TvSubtitleAppearanceItem.entries.associateWith { FocusRequester() } }
+    LaunchedEffect(Unit) { runCatching { requesters.getValue(TvSubtitleAppearanceItem.Size).requestFocus() } }
+
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)).zIndex(4f), contentAlignment = Alignment.CenterEnd) {
+        Column(
+            Modifier.fillMaxHeight().padding(top = 28.dp, bottom = 28.dp, end = 28.dp)
+                .width(510.dp).clip(RoundedCornerShape(26.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xF20B0D12), Color(0xF20B0D12), Color(0xE8171B23))))
+                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(26.dp))
+                .padding(horizontal = 28.dp, vertical = 26.dp)
+                .focusGroup(),
+        ) {
+            Text("Subtitle appearance", color = TvColors.onMedia, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text("Changes preview while playback continues", color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                TvSubtitleSettingRow(
+                    title = "Size", value = "${style.sizePercent}%", requester = requesters.getValue(TvSubtitleAppearanceItem.Size),
+                    onBack = onDismiss, onAdjust = { direction -> onStyleChanged(style.copy(sizePercent = stepValue(tvSubtitleSizePresets, style.sizePercent, direction))) },
+                )
+                TvSubtitleSettingRow(
+                    title = "Vertical position", value = "${style.offsetPercent}%", requester = requesters.getValue(TvSubtitleAppearanceItem.Position),
+                    onBack = onDismiss, onAdjust = { direction -> onStyleChanged(style.copy(offsetPercent = stepValue(tvSubtitleOffsetPresets, style.offsetPercent, direction))) },
+                )
+                TvSubtitleColorRow("Text color", style.textColor, tvSubtitleColors, requesters.getValue(TvSubtitleAppearanceItem.TextColor), onDismiss) {
+                    onStyleChanged(style.copy(textColor = it))
+                }
+                TvSubtitleColorRow("Background color", style.backgroundColor, tvSubtitleBackgroundColors, requesters.getValue(TvSubtitleAppearanceItem.BackgroundColor), onDismiss) {
+                    onStyleChanged(style.copy(backgroundColor = it))
+                }
+                TvSubtitleColorRow("Outline color", style.outlineColor, tvSubtitleColors, requesters.getValue(TvSubtitleAppearanceItem.OutlineColor), onDismiss) {
+                    onStyleChanged(style.copy(outlineColor = it))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("↑  ↓  Browse     ←  →  Adjust     OK  Cycle color     Back  Subtitles", color = TvColors.mediaSecondary, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+@Composable
+private fun TvSubtitleSettingRow(title: String, value: String, requester: FocusRequester, onBack: () -> Unit, onAdjust: (Int) -> Unit) {
+    TvSubtitleAppearanceRow(title, value, requester, onBack, onActivate = { onAdjust(1) }, onAdjust = onAdjust)
+}
+
+@Composable
+private fun TvSubtitleColorRow(
+    title: String,
+    selected: String,
+    colors: List<Pair<String, String>>,
+    requester: FocusRequester,
+    onBack: () -> Unit,
+    onSelected: (String) -> Unit,
+) {
+    val index = colors.indexOfFirst { it.first.equals(selected, true) }.coerceAtLeast(0)
+    val next = { direction: Int ->
+        val nextIndex = (index + direction).mod(colors.size)
+        onSelected(colors[nextIndex].first)
+    }
+    TvSubtitleAppearanceRow(title, colors.getOrNull(index)?.second ?: selected, requester, onBack, onActivate = { next(1) }, onAdjust = next)
+}
+
+@Composable
+private fun TvSubtitleAppearanceRow(
+    title: String,
+    value: String,
+    requester: FocusRequester,
+    onBack: () -> Unit,
+    onActivate: () -> Unit,
+    onAdjust: (Int) -> Unit,
+) {
+    var focused by remember(title) { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().height(62.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (focused) Color.White.copy(alpha = 0.17f) else Color.White.copy(alpha = 0.035f))
+            .border(if (focused) 2.dp else 1.dp, if (focused) TvColors.onMedia else Color.White.copy(alpha = 0.07f), RoundedCornerShape(14.dp))
+            .focusRequester(requester).onFocusChanged { focused = it.isFocused }.focusable()
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) false else when (e.key) {
+                    Key.DirectionLeft -> { onAdjust(-1); true }
+                    Key.DirectionRight -> { onAdjust(1); true }
+                    Key.Enter, Key.DirectionCenter, Key.NumPadEnter -> { onActivate(); true }
+                    Key.Back, Key.Escape -> { onBack(); true }
+                    else -> false
+                }
+            }
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(title, color = TvColors.onMedia, style = MaterialTheme.typography.bodyLarge, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Medium)
+        Spacer(Modifier.weight(1f))
+        Text(value, color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+private fun stepValue(presets: List<Int>, value: Int, direction: Int): Int {
+    val index = presets.indexOf(value).takeIf { it >= 0 } ?: presets.indices.minByOrNull { kotlin.math.abs(presets[it] - value) } ?: 0
+    return presets[(index + direction).coerceIn(presets.indices)]
 }
 
 @Composable

@@ -149,6 +149,8 @@ class MainViewModel(
     internal val tvPlayback: StateFlow<TvPlaybackUiState> = _tvPlayback.asStateFlow()
     private var tvPlaybackJob: Job? = null
     private var tvPlaybackMonitorJob: Job? = null
+    private var tvSkipSegmentsJob: Job? = null
+    private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private var tvStreamsJob: Job? = null
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
     private val auditedTvStreamTargets = mutableSetOf<String>()
@@ -2086,6 +2088,8 @@ class MainViewModel(
     internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption) {
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
+        tvSkipSegmentsJob?.cancel()
+        latestTvCorePlayer = null
         playbackRepository.setPlaybackEventListener(null)
         playbackRepository.release()
 
@@ -2258,12 +2262,25 @@ class MainViewModel(
     private fun startTvPlaybackMonitor(attempt: TvPlaybackAttempt) {
         tvPlaybackMonitorJob?.cancel()
         val player = playbackRepository.getPlayer() ?: return
+        tvSkipSegmentsJob?.cancel()
+        tvSkipSegmentsJob = viewModelScope.launch {
+            playbackRepository.playerFlow().collect { corePlayer ->
+                if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
+                latestTvCorePlayer = corePlayer
+                val current = _tvPlayback.value
+                _tvPlayback.value = current.copy(
+                    skipSegments = playbackRepository.tvSkipSegments(corePlayer, current.runtime.durationMs),
+                )
+            }
+        }
         tvPlaybackMonitorJob = viewModelScope.launch {
             player.runtimeState.collect { runtime ->
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
                 val current = _tvPlayback.value
                 _tvPlayback.value = current.copy(
                     runtime = runtime,
+                    skipSegments = latestTvCorePlayer?.let { playbackRepository.tvSkipSegments(it, runtime.durationMs) }
+                        ?: current.skipSegments,
                     isBuffering = runtime.isBuffering,
                     error = if (runtime.error != null && !current.firstVisualObserved) "Couldn’t start this source" else current.error,
                     stage = when {
@@ -2319,8 +2336,15 @@ class MainViewModel(
     internal fun seekTvPlaybackBy(deltaMs: Long) {
         val state = _tvPlayback.value
         if (!state.firstVisualObserved) return
-        val player = playbackRepository.getPlayer() ?: return
         val target = clampTvSeekTarget(state.runtime.positionMs + deltaMs, state.runtime.durationMs) ?: return
+        seekTvPlaybackTo(target)
+    }
+
+    internal fun seekTvPlaybackTo(targetMs: Long) {
+        val state = _tvPlayback.value
+        if (!state.firstVisualObserved || state.runtime.durationMs <= 0L) return
+        val player = playbackRepository.getPlayer() ?: return
+        val target = clampTvSeekTarget(targetMs, state.runtime.durationMs) ?: return
         player.seekTo(target)
         playbackRepository.reportSeek(target, state.runtime.durationMs)
         reportTvFinalProgress(state.copy(runtime = state.runtime.copy(positionMs = target)))
@@ -2341,6 +2365,9 @@ class MainViewModel(
         tvPlaybackJob = null
         tvPlaybackMonitorJob?.cancel()
         tvPlaybackMonitorJob = null
+        tvSkipSegmentsJob?.cancel()
+        tvSkipSegmentsJob = null
+        latestTvCorePlayer = null
         playbackRepository.setPlaybackEventListener(null)
         playbackRepository.release()
         lastTvTimeReportNanos = 0L

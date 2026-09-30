@@ -2,6 +2,7 @@ package com.stremio.mobile.presentation.tv
 
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.data.model.StreamSourceKind
+import com.stremio.mobile.data.model.TvSkipSegments
 import com.stremio.mobile.player.PlayerEngine
 import java.util.UUID
 
@@ -71,6 +72,7 @@ internal data class TvPlaybackUiState(
     val firstVisualObserved: Boolean = false,
     val isBuffering: Boolean = false,
     val runtime: com.stremio.mobile.player.PlayerRuntimeState = com.stremio.mobile.player.PlayerRuntimeState(),
+    val skipSegments: TvSkipSegments = TvSkipSegments(),
 ) {
     val isResolvingOrPreparing: Boolean get() = stage == TvPlaybackStage.Resolving || stage == TvPlaybackStage.Preparing
     val playbackAttemptId: String? get() = attempt?.attemptId

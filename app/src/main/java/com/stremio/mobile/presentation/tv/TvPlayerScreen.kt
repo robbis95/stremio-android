@@ -34,6 +34,8 @@ import androidx.compose.ui.zIndex
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.stremio.mobile.data.model.tvIntroSkipTarget
+import com.stremio.mobile.data.model.tvOutroSkipTarget
 import com.stremio.mobile.player.Player
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import kotlinx.coroutines.delay
@@ -45,6 +47,7 @@ internal fun TvPlayerScreen(
     seekDurationMs: Long,
     onTogglePlayback: () -> Unit,
     onSeek: (Long) -> Unit,
+    onSeekTo: (Long) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -181,6 +184,12 @@ internal fun TvPlayerScreen(
                         }
                     } else Box(Modifier.weight(1f))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        tvIntroSkipTarget(state.skipSegments, state.runtime.positionMs)?.let { target ->
+                            Button(onClick = { onSeekTo(target) }) { Text("Skip Intro") }
+                        }
+                        tvOutroSkipTarget(state.skipSegments, state.runtime.positionMs, state.runtime.durationMs)?.let { target ->
+                            Button(onClick = { onSeekTo(target) }) { Text("Skip Outro") }
+                        }
                         Button(onClick = { onSeek(-seekDurationMs) }) { Text("−${seekDurationMs / 1000}s") }
                         Button(onClick = onTogglePlayback, modifier = Modifier.focusRequester(controlsRequester)) {
                             Text(if (state.runtime.isPlaying) "Pause" else "Play")

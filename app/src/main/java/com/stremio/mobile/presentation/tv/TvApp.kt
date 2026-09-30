@@ -295,6 +295,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                             seekDurationMs = viewModel.tvSeekDurationMs(),
                             onTogglePlayback = viewModel::toggleTvPlayback,
                             onSeek = viewModel::seekTvPlaybackBy,
+                            onSeekTo = viewModel::seekTvPlaybackTo,
                             onRetry = viewModel::retryTvPlayback,
                             onBack = {
                                 viewModel.closeTvPlayback()

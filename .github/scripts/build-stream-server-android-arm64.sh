@@ -48,6 +48,7 @@ set(VCPKG_CMAKE_CONFIGURE_OPTIONS -DANDROID_ABI=arm64-v8a)
 EOF
 
 "$vcpkg_root/vcpkg" install \
+  "--x-manifest-root=$stream_server_root" \
   --triplet arm64-android \
   "--x-install-root=$installed_root" \
   "--overlay-triplets=$triplet_dir" \

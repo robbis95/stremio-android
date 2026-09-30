@@ -116,6 +116,51 @@ class TvPlaybackStateTest {
         assertFalse(tvPlaybackCompletionPolicy.autoAdvance)
     }
 
+    @Test fun `next prompt follows configured final window and hides after seeking out`() {
+        assertFalse(tvNextEpisodePromptVisible(800_000, 1_000_000, 30_000, true, false))
+        assertTrue(tvNextEpisodePromptVisible(975_000, 1_000_000, 30_000, true, false))
+        assertFalse(tvNextEpisodePromptVisible(975_000, 1_000_000, 30_000, false, false))
+        assertFalse(tvNextEpisodePromptVisible(975_000, 1_000_000, 30_000, true, true))
+        assertFalse(tvNextEpisodePromptVisible(975_000, 1_000_000, 0, true, false))
+        assertFalse(tvNextEpisodePromptVisible(800_000, 1_000_000, 30_000, true, true))
+    }
+
+    @Test fun `dismissal persists for current attempt and stale next state is rejected`() {
+        val current = TvNextEpisodeState(playbackAttemptId = "attempt-2", videoId = "episode-7")
+        val dismissed = tvNextEpisodeDismiss(current)
+        assertTrue(dismissed.dismissed)
+        assertFalse(dismissed.promptVisible)
+        assertTrue(isCurrentTvNextEpisode(dismissed, "attempt-2"))
+        assertFalse(isCurrentTvNextEpisode(dismissed, "attempt-1"))
+        assertFalse(TvNextEpisodeState(playbackAttemptId = "attempt-3", videoId = "episode-8").dismissed)
+    }
+
+    @Test fun `ended advances only when binge watching and a next video exist`() {
+        assertTrue(tvShouldAutoAdvanceEnded(true, true, true))
+        assertFalse(tvShouldAutoAdvanceEnded(true, true, false))
+        assertFalse(tvShouldAutoAdvanceEnded(true, false, true))
+        assertFalse(tvShouldAutoAdvanceEnded(false, true, true))
+    }
+
+    @Test fun `transition can be started only once`() {
+        val available = TvNextEpisodeState(playbackAttemptId = "attempt", videoId = "next")
+        val started = tvNextEpisodeTransitionStarted(available)!!
+        assertEquals(TvNextEpisodeTransition.Loading, started.transition)
+        assertNull(tvNextEpisodeTransitionStarted(started))
+        assertNull(tvNextEpisodeTransitionStarted(TvNextEpisodeState()))
+    }
+
+    @Test fun `next video target preserves series identity and uses exact video id`() {
+        val series = TvStreamTarget("series", "show-id", "Show", videoId = "old", episodeLabel = "S01E05", guessStreamPath = false)
+        val next = nextEpisodeTarget(series, "core-video-6", "S01E06 · The Next Chapter")
+        assertEquals("series", next.contentType)
+        assertEquals("show-id", next.contentId)
+        assertEquals("Show", next.contentName)
+        assertEquals("core-video-6", next.videoId)
+        assertEquals("S01E06 · The Next Chapter", next.episodeLabel)
+        assertFalse(next.guessStreamPath)
+    }
+
     @Test fun `retry keeps the exact semantic stream while replacing attempt identity`() {
         val sameOption = option("provider:stream:one")
         val initial = TvPlaybackAttempt.create(target, sameOption, PlayerEngine.MPV, 100)

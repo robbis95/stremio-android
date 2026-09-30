@@ -48,11 +48,20 @@ import com.stremio.mobile.presentation.tv.TvPlaybackUiState
 import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
 import com.stremio.mobile.presentation.tv.TvPlaybackStage
 import com.stremio.mobile.presentation.tv.TvPlaybackTiming
+import com.stremio.mobile.presentation.tv.TvNextEpisodeState
+import com.stremio.mobile.presentation.tv.TvNextEpisodeTransition
+import com.stremio.mobile.presentation.tv.isCurrentTvNextEpisode
 import com.stremio.mobile.presentation.tv.isCurrentTvAttempt
 import com.stremio.mobile.presentation.tv.tvProgressReportingAllowed
 import com.stremio.mobile.presentation.tv.clampTvSeekTarget
 import com.stremio.mobile.presentation.tv.safeTvPlaybackTrace
 import com.stremio.mobile.presentation.tv.tvPlaybackCompletionPolicy
+import com.stremio.mobile.presentation.tv.tvNextEpisodePromptVisible
+import com.stremio.mobile.presentation.tv.tvNextEpisodeDismiss
+import com.stremio.mobile.presentation.tv.tvNextEpisodeTransitionStarted
+import com.stremio.mobile.presentation.tv.tvShouldAutoAdvanceEnded
+import com.stremio.mobile.presentation.tv.nextEpisodeTarget
+import com.stremio.mobile.presentation.tv.preferredNextEpisodeOption
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
 import com.stremio.mobile.presentation.tv.tvStreamTargetMatches
 import com.stremio.mobile.presentation.tv.mapTvStreamEmission
@@ -153,6 +162,9 @@ class MainViewModel(
     private var tvSkipSegmentsJob: Job? = null
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private var tvStreamsJob: Job? = null
+    private var tvNextEpisodeJob: Job? = null
+    private var tvNextVideoAttemptId: String? = null
+    private var tvNextVideo: com.stremio.core.types.resource.Video? = null
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
     private val auditedTvStreamTargets = mutableSetOf<String>()
     private var detailsLibraryOverride: Boolean? = null
@@ -2108,6 +2120,7 @@ class MainViewModel(
             stage = TvPlaybackStage.Resolving,
             requestedEngine = requestedEngine,
             timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
+            nextEpisode = nextEpisodeStateFor(attempt.attemptId),
         )
         lastTvTimeReportNanos = 0L
         Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated", server = if (serverRequired) "pending" else "not-required"))
@@ -2191,6 +2204,8 @@ class MainViewModel(
         val state = _tvStreamSelection.value
         val target = state.target ?: return
         val option = state.options.firstOrNull { it.semanticKey == semanticKey } ?: return
+        tvNextEpisodeJob?.cancel()
+        tvNextEpisodeJob = null
         _tvStreamSelection.value = state.copy(selectedStreamKey = option.semanticKey)
         startTvPlayback(target, option)
     }
@@ -2199,6 +2214,8 @@ class MainViewModel(
         val current = _tvPlayback.value
         val target = current.attempt?.target ?: return
         val option = current.option ?: return
+        tvNextEpisodeJob?.cancel()
+        tvNextEpisodeJob = null
         startTvPlayback(target, option)
     }
 
@@ -2317,6 +2334,16 @@ class MainViewModel(
                         runtime.ended -> TvPlaybackStage.Ended
                         else -> current.stage
                     },
+                    nextEpisode = current.nextEpisode.copy(
+                        promptVisible = tvNextEpisodePromptVisible(
+                            runtime.positionMs,
+                            runtime.durationMs,
+                            profileSettings.value?.nextVideoNotificationDuration ?: 0L,
+                            current.nextEpisode.available,
+                            current.nextEpisode.dismissed,
+                        ),
+                        automaticEnabled = profileSettings.value?.bingeWatching == true,
+                    ),
                 )
                 val fallbackNotice = current.requestedEngine != current.actualEngine &&
                     runtime.error == "MPV unavailable; using ExoPlayer."
@@ -2329,6 +2356,11 @@ class MainViewModel(
                     }
                     _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Ended)
                     Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "ended", current.actualEngine, current.timing))
+                    if (tvProgressReportingAllowed(current) &&
+                        tvShouldAutoAdvanceEnded(true, current.nextEpisode.available, profileSettings.value?.bingeWatching == true)
+                    ) {
+                        playTvNextEpisode(attempt.attemptId, automatic = true)
+                    }
                 } else if (tvProgressReportingAllowed(current) && runtime.durationMs > 0 &&
                     (lastTvTimeReportNanos == 0L || SystemClock.elapsedRealtimeNanos() - lastTvTimeReportNanos >= 5_000_000_000L)
                 ) {
@@ -2336,6 +2368,78 @@ class MainViewModel(
                     playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
                 }
             }
+        }
+    }
+
+    private fun nextEpisodeStateFor(attemptId: String): TvNextEpisodeState {
+        val video = playbackRepository.getNextVideo()
+        tvNextVideoAttemptId = attemptId
+        tvNextVideo = video
+        val info = video?.seriesInfo
+        val label = if (info != null && info.season > 0 && info.episode > 0) {
+            "S${info.season.toString().padStart(2, '0')}E${info.episode.toString().padStart(2, '0')}"
+        } else null
+        return TvNextEpisodeState(
+            playbackAttemptId = attemptId,
+            videoId = video?.id,
+            episodeLabel = label,
+            title = video?.title?.takeIf(String::isNotBlank),
+            automaticEnabled = profileSettings.value?.bingeWatching == true,
+        )
+    }
+
+    internal fun dismissTvNextEpisode(attemptId: String) {
+        val current = _tvPlayback.value
+        if (!isCurrentTvAttempt(current, attemptId) || !isCurrentTvNextEpisode(current.nextEpisode, attemptId)) return
+        _tvPlayback.value = current.copy(nextEpisode = tvNextEpisodeDismiss(current.nextEpisode))
+    }
+
+    internal fun playTvNextEpisode(attemptId: String, automatic: Boolean = false) {
+        val current = _tvPlayback.value
+        if (!isCurrentTvAttempt(current, attemptId) || !isCurrentTvNextEpisode(current.nextEpisode, attemptId)) return
+        if (automatic && !current.nextEpisode.automaticEnabled) return
+        val transition = tvNextEpisodeTransitionStarted(current.nextEpisode) ?: return
+        val next = tvNextVideo.takeIf { tvNextVideoAttemptId == attemptId }
+        if (next == null || next.id != transition.videoId) {
+            _tvPlayback.value = current.copy(
+                nextEpisode = transition.copy(transition = TvNextEpisodeTransition.Failed, error = "The next episode is no longer available."),
+            )
+            return
+        }
+        val parentTarget = current.attempt?.target ?: return
+        val target = nextEpisodeTarget(parentTarget, next)
+        playbackRepository.reportNextVideo()
+        _tvPlayback.value = current.copy(nextEpisode = transition)
+        tvNextEpisodeJob?.cancel()
+        tvNextEpisodeJob = viewModelScope.launch {
+            openTvStreams(target)
+            val resolved = withTimeoutOrNull(30_000L) {
+                _tvStreamSelection.first { selection ->
+                    selection.target?.semanticTargetKey == target.semanticTargetKey && !selection.isLoading
+                }
+            }
+            if (!isCurrentTvAttempt(_tvPlayback.value, attemptId)) return@launch
+            if (resolved == null || resolved.options.isEmpty()) {
+                val latest = _tvPlayback.value
+                if (isCurrentTvAttempt(latest, attemptId)) {
+                    _tvPlayback.value = latest.copy(nextEpisode = latest.nextEpisode.copy(
+                        transition = TvNextEpisodeTransition.Failed,
+                        error = "No playable sources were found for ${target.episodeLabel ?: "the next episode"}.",
+                    ))
+                }
+                return@launch
+            }
+            val previousOption = current.option
+            val option = preferredNextEpisodeOption(resolved.visibleOptions.ifEmpty { resolved.options }, previousOption)
+            if (option == null) {
+                val latest = _tvPlayback.value
+                _tvPlayback.value = latest.copy(nextEpisode = latest.nextEpisode.copy(
+                    transition = TvNextEpisodeTransition.Failed,
+                    error = "No playable sources were found for ${target.episodeLabel ?: "the next episode"}.",
+                ))
+                return@launch
+            }
+            if (isCurrentTvAttempt(_tvPlayback.value, attemptId)) startTvPlayback(target, option)
         }
     }
 
@@ -2390,12 +2494,16 @@ class MainViewModel(
             Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "closed", state.actualEngine, state.timing))
         }
         tvPlaybackJob?.cancel()
+        tvNextEpisodeJob?.cancel()
+        tvNextEpisodeJob = null
         tvPlaybackJob = null
         tvPlaybackMonitorJob?.cancel()
         tvPlaybackMonitorJob = null
         tvSkipSegmentsJob?.cancel()
         tvSkipSegmentsJob = null
         latestTvCorePlayer = null
+        tvNextVideoAttemptId = null
+        tvNextVideo = null
         playbackRepository.setPlaybackEventListener(null)
         playbackRepository.release()
         lastTvTimeReportNanos = 0L

@@ -108,6 +108,8 @@ internal fun TvPlayerScreen(
     onSeekTo: (Long) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    onPlayNext: () -> Unit = {},
+    onDismissNext: () -> Unit = {},
     onAudioTrackSelected: (PlayerTrackOption) -> Unit,
     onSubtitleTrackSelected: (PlayerTrackOption) -> Unit,
     onSubtitlesDisabled: () -> Unit,
@@ -130,6 +132,18 @@ internal fun TvPlayerScreen(
     val audioRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val subtitlesRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val appearanceRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val nextPlayRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    var nextCardFocused by remember(state.playbackAttemptId) { mutableStateOf(false) }
+    val dismissNext = {
+        onDismissNext()
+        nextCardFocused = false
+        runCatching { rootRequester.requestFocus() }
+        Unit
+    }
+
+    BackHandler(enabled = nextCardFocused && state.nextEpisode.transition != TvNextEpisodeTransition.Loading) {
+        dismissNext()
+    }
 
     BackHandler(enabled = trackPanel != null || showSubtitleAppearance) {
         if (showSubtitleAppearance) {
@@ -187,6 +201,11 @@ internal fun TvPlayerScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 if (state.stage == TvPlaybackStage.Error) return@onPreviewKeyEvent false
+                if (nextCardFocused) return@onPreviewKeyEvent false
+                if (state.nextEpisode.promptVisible && event.key == Key.DirectionDown) {
+                    runCatching { nextPlayRequester.requestFocus() }
+                    return@onPreviewKeyEvent true
+                }
                 if (controlsVisible && state.firstVisualObserved) {
                     controlsActivity++
                     return@onPreviewKeyEvent false
@@ -233,11 +252,11 @@ internal fun TvPlayerScreen(
                     TvErrorOverlay(state, retryRequester, backRequester, onRetry, onBack)
                 }
             TvPlaybackStage.Playing -> Unit
-            TvPlaybackStage.Ended -> TvEndedOverlay(state)
+            TvPlaybackStage.Ended -> TvEndedOverlay(state, onPlayNext, onBack)
         }
 
         AnimatedVisibility(
-            visible = state.firstVisualObserved && controlsVisible && state.stage != TvPlaybackStage.Error,
+            visible = state.firstVisualObserved && controlsVisible && state.stage !in setOf(TvPlaybackStage.Error, TvPlaybackStage.Ended),
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().zIndex(1f),
             enter = fadeIn() + slideInVertically { it / 12 },
             exit = fadeOut() + slideOutVertically { it / 12 },
@@ -287,6 +306,17 @@ internal fun TvPlayerScreen(
                 style = subtitleStyle,
                 onStyleChanged = onSubtitleStyleChanged,
                 onDismiss = { showSubtitleAppearance = false; runCatching { appearanceRequester.requestFocus() } },
+            )
+        }
+
+        if (state.stage == TvPlaybackStage.Playing && (state.nextEpisode.promptVisible || state.nextEpisode.transition == TvNextEpisodeTransition.Loading)) {
+            TvNextEpisodeCard(
+                state = state.nextEpisode,
+                playRequester = nextPlayRequester,
+                onFocused = { nextCardFocused = it },
+                onPlay = onPlayNext,
+                onDismiss = dismissNext,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 56.dp, bottom = 48.dp).zIndex(2f),
             )
         }
 
@@ -820,14 +850,20 @@ private fun TvErrorOverlay(
 }
 
 @Composable
-private fun TvActionButton(text: String, requester: FocusRequester, initiallyFocused: Boolean = false, onClick: () -> Unit) {
+private fun TvActionButton(
+    text: String,
+    requester: FocusRequester,
+    initiallyFocused: Boolean = false,
+    onClick: () -> Unit,
+    onFocus: ((Boolean) -> Unit)? = null,
+) {
     var focused by remember { mutableStateOf(initiallyFocused) }
     Box(
         Modifier.clip(RoundedCornerShape(26.dp))
             .background(if (focused) TvColors.onMedia else Color.White.copy(alpha = 0.1f))
             .border(if (focused) 3.dp else 1.dp, if (focused) TvColors.onMedia else Color.White.copy(alpha = 0.5f), RoundedCornerShape(26.dp))
             .focusRequester(requester)
-            .onFocusChanged { focused = it.isFocused }
+            .onFocusChanged { focused = it.isFocused; onFocus?.invoke(it.isFocused) }
             .focusable()
             .onPreviewKeyEvent { e -> if (e.type == KeyEventType.KeyDown && e.key in setOf(Key.Enter, Key.DirectionCenter, Key.NumPadEnter)) { onClick(); true } else false }
             .padding(horizontal = 30.dp, vertical = 14.dp),
@@ -838,7 +874,14 @@ private fun TvActionButton(text: String, requester: FocusRequester, initiallyFoc
 }
 
 @Composable
-private fun TvEndedOverlay(state: TvPlaybackUiState) {
+private fun TvEndedOverlay(state: TvPlaybackUiState, onPlayNext: () -> Unit, onBack: () -> Unit) {
+    val playRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val backRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    LaunchedEffect(state.playbackAttemptId, state.nextEpisode.available, state.nextEpisode.automaticEnabled, state.nextEpisode.transition) {
+        if (state.nextEpisode.available && !state.nextEpisode.automaticEnabled && state.nextEpisode.transition != TvNextEpisodeTransition.Failed) {
+            runCatching { playRequester.requestFocus() }
+        } else runCatching { backRequester.requestFocus() }
+    }
     Column(
         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Black.copy(alpha = 0.12f), Color.Black.copy(alpha = 0.82f))))
             .padding(bottom = 100.dp),
@@ -849,15 +892,70 @@ private fun TvEndedOverlay(state: TvPlaybackUiState) {
             Text("✓", color = TvColors.onMedia, style = MaterialTheme.typography.headlineMedium)
         }
         Spacer(Modifier.height(20.dp))
-        Text("You’re all caught up", color = TvColors.onMedia, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
+        Text(if (state.nextEpisode.available) "Episode finished" else "You’re all caught up", color = TvColors.onMedia, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold)
         playerTitle(state).takeIf(String::isNotBlank)?.let {
             Spacer(Modifier.height(8.dp))
             Text(it, color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyLarge)
         }
         Spacer(Modifier.height(8.dp))
         Text("Playback ended", color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyMedium)
+        if (state.nextEpisode.transition == TvNextEpisodeTransition.Loading) {
+            Spacer(Modifier.height(26.dp))
+            Text("Starting next episode…", color = TvColors.mediaSecondary, style = MaterialTheme.typography.titleMedium)
+        } else if (state.nextEpisode.available && !state.nextEpisode.automaticEnabled) {
+            Spacer(Modifier.height(26.dp))
+            Text(nextEpisodeDescription(state.nextEpisode), color = TvColors.onMedia, style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                TvActionButton("Play next episode", playRequester, initiallyFocused = true, onClick = onPlayNext)
+                TvActionButton("Back", backRequester, onClick = onBack)
+            }
+        } else {
+            Spacer(Modifier.height(18.dp))
+            TvActionButton("Back", backRequester, initiallyFocused = true, onClick = onBack)
+        }
+        state.nextEpisode.error?.let {
+            Spacer(Modifier.height(16.dp))
+            Text(it, color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyMedium)
+        }
     }
 }
+
+@Composable
+private fun TvNextEpisodeCard(
+    state: TvNextEpisodeState,
+    playRequester: FocusRequester,
+    onFocused: (Boolean) -> Unit,
+    onPlay: () -> Unit,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier.width(390.dp).clip(RoundedCornerShape(22.dp))
+            .background(Color(0xE622252C)).border(1.dp, Color.White.copy(alpha = 0.22f), RoundedCornerShape(22.dp))
+            .padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        if (state.transition == TvNextEpisodeTransition.Loading) {
+            Text("Starting next episode…", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        } else {
+            Text("Next episode", color = Color(0xFFB6C8FF), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+            Text(nextEpisodeDescription(state), color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            state.title?.takeIf(String::isNotBlank)?.let {
+                Text(it, color = Color.White.copy(alpha = 0.78f), style = MaterialTheme.typography.bodyLarge, maxLines = 2)
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvActionButton("Play now", playRequester, initiallyFocused = false, onClick = onPlay, onFocus = onFocused)
+                TvActionButton("Not now", remember { FocusRequester() }, onClick = onDismiss, onFocus = onFocused)
+            }
+        }
+    }
+}
+
+private fun nextEpisodeDescription(state: TvNextEpisodeState): String =
+    listOfNotNull(state.episodeLabel?.takeIf(String::isNotBlank), state.title?.takeIf(String::isNotBlank))
+        .joinToString(" · ").ifBlank { "Continue watching" }
 
 private fun requestControlFocus(
     control: TvPlayerControl,

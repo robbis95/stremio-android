@@ -42,4 +42,25 @@ class TvPlaybackLabStateTest {
         assertEquals(100_000L, state.runtime.positionMs)
         assertEquals(300_000L, state.runtime.bufferedPositionMs)
     }
+
+    @Test
+    fun nextEpisodePresetsUseProductionPlayerStateAndMetadata() {
+        val outside = labState(SimPreset.NextOutsideWindow, 120_000L, 1_800_000L, 150_000L)
+        val visible = labState(SimPreset.NextPromptVisible, 1_790_000L, 1_800_000L, 1_800_000L)
+        val dismissed = labState(SimPreset.NextPromptDismissed, 1_790_000L, 1_800_000L, 1_800_000L)
+        val endedWithNext = labState(SimPreset.EndedWithNext, 1_800_000L, 1_800_000L, 1_800_000L)
+        val endedWithoutNext = labState(SimPreset.EndedWithoutNext, 1_800_000L, 1_800_000L, 1_800_000L)
+
+        assertEquals(TvPlaybackStage.Playing, outside.stage)
+        assertFalse(outside.nextEpisode.promptVisible)
+        assertTrue(visible.nextEpisode.promptVisible)
+        assertTrue(dismissed.nextEpisode.dismissed)
+        assertFalse(dismissed.nextEpisode.promptVisible)
+        assertEquals("S01E07", visible.nextEpisode.episodeLabel)
+        assertEquals("The Next Chapter", visible.nextEpisode.title)
+        assertEquals(TvPlaybackStage.Ended, endedWithNext.stage)
+        assertTrue(endedWithNext.nextEpisode.available)
+        assertEquals(TvPlaybackStage.Ended, endedWithoutNext.stage)
+        assertFalse(endedWithoutNext.nextEpisode.available)
+    }
 }

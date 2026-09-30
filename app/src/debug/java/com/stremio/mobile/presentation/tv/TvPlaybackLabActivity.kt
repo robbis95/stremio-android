@@ -75,9 +75,11 @@ private enum class MediaPreset(val label: String, val url: String?) {
     CustomUrl("Custom URL", null),
 }
 internal enum class SimPreset(val label: String) {
-    Starting("Starting"), Buffering("Buffering"), Playing("Playing"),
+    Starting("Starting"), Buffering("Buffering"), Playing("Playing normally"),
     Paused("Paused"), Error("Error"), Ended("Ended"),
     IntroActive("Intro active"), OutroActive("Outro active"),
+    NextOutsideWindow("Next available · outside window"), NextPromptVisible("Next prompt visible"),
+    NextPromptDismissed("Next prompt dismissed"), EndedWithNext("Ended · next episode"), EndedWithoutNext("Ended · no next episode"),
 }
 
 class TvPlaybackLabActivity : ComponentActivity() {
@@ -118,6 +120,9 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
         val presetPosition = when (next) {
             SimPreset.IntroActive -> 100_000L
             SimPreset.OutroActive -> (SIM_SKIP_SEGMENTS.outroStartMs ?: 27 * 60 * 1000L) + 30_000L
+            SimPreset.NextOutsideWindow -> 120_000L
+            SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed -> (durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS) - 10_000L
+            SimPreset.EndedWithNext, SimPreset.EndedWithoutNext -> durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS
             else -> positionInput.toLongOrNull()?.coerceAtLeast(0L) ?: 120_000L
         }
         val initialPosition = presetPosition
@@ -229,6 +234,32 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 } else applyPreset(SimPreset.Starting)
             },
             onBack = ::leavePlayer,
+            onPlayNext = {
+                if (mode == LabMode.SimulatedState) {
+                    val old = playbackState.attempt
+                    val nextAttempt = old?.copy(
+                        attemptId = newTvPlaybackAttemptId(),
+                        target = old.target.copy(videoId = "lab-s01e07", episodeLabel = "S01E07"),
+                        startedAtNanos = System.nanoTime(),
+                    )
+                    val newRuntime = runtime.copy(positionMs = 0L, isPlaying = true, isBuffering = false, ended = false)
+                    simulatedRuntime.value = newRuntime
+                    playbackState = playbackState.copy(
+                        attempt = nextAttempt,
+                        stage = TvPlaybackStage.Playing,
+                        runtime = newRuntime,
+                        nextEpisode = TvNextEpisodeState(
+                            playbackAttemptId = nextAttempt?.attemptId,
+                            videoId = "lab-s01e08",
+                            episodeLabel = "S01E08",
+                            title = "The Long Way Home",
+                        ),
+                    )
+                }
+            },
+            onDismissNext = {
+                playbackState = playbackState.copy(nextEpisode = tvNextEpisodeDismiss(playbackState.nextEpisode))
+            },
         )
         return
     }
@@ -301,8 +332,10 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SimPreset.entries.take(4).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SimPreset.entries.drop(4).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
+            SimPreset.entries.drop(4).chunked(4).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(positionInput, { positionInput = it }, label = { Text("Position ms") }, modifier = Modifier.weight(1f))
@@ -312,7 +345,8 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             Text("Fake intro: 01:30–02:30 · fake outro starts at 27:00", color = TvColors.secondaryText)
             Button(onClick = {
                 applyPreset(preset)
-                playbackState = playbackState.copy(attempt = labAttempt("Simulated ${preset.label}"))
+                val attempt = labAttempt("Simulated ${preset.label}")
+                playbackState = playbackState.copy(attempt = attempt, nextEpisode = playbackState.nextEpisode.copy(playbackAttemptId = attempt.attemptId))
                 player = null
                 inPlayer = true
             }) { Text("Open simulated player") }
@@ -338,14 +372,19 @@ private fun labAttempt(label: String) = TvPlaybackAttempt(
 internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, bufferedMs: Long): TvPlaybackUiState {
     val stage = when (preset) {
         SimPreset.Starting -> TvPlaybackStage.Preparing
-        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.IntroActive, SimPreset.OutroActive -> TvPlaybackStage.Playing
+        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.IntroActive, SimPreset.OutroActive,
+        SimPreset.NextOutsideWindow, SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed -> TvPlaybackStage.Playing
         SimPreset.Error -> TvPlaybackStage.Error
-        SimPreset.Ended -> TvPlaybackStage.Ended
+        SimPreset.Ended, SimPreset.EndedWithNext, SimPreset.EndedWithoutNext -> TvPlaybackStage.Ended
     }
-    val playing = preset in setOf(SimPreset.Playing, SimPreset.IntroActive, SimPreset.OutroActive)
+    val playing = preset in setOf(
+        SimPreset.Playing, SimPreset.IntroActive, SimPreset.OutroActive, SimPreset.NextOutsideWindow,
+        SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed,
+    )
     val buffering = preset == SimPreset.Buffering
-    val ended = preset == SimPreset.Ended
-    val firstVisual = preset in setOf(SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.Ended, SimPreset.IntroActive, SimPreset.OutroActive)
+    val ended = preset in setOf(SimPreset.Ended, SimPreset.EndedWithNext, SimPreset.EndedWithoutNext)
+    val firstVisual = preset !in setOf(SimPreset.Starting, SimPreset.Error)
+    val hasNext = preset in setOf(SimPreset.NextOutsideWindow, SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed, SimPreset.EndedWithNext)
     val runtime = PlayerRuntimeState(
         isPlaying = playing,
         isBuffering = buffering,
@@ -367,5 +406,12 @@ internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, buf
         isBuffering = buffering,
         runtime = runtime,
         skipSegments = SIM_SKIP_SEGMENTS.takeIf { durationMs >= 27 * 60 * 1000L } ?: TvSkipSegments(),
+        nextEpisode = TvNextEpisodeState(
+            videoId = "lab-s01e07".takeIf { hasNext },
+            episodeLabel = "S01E07".takeIf { hasNext },
+            title = "The Next Chapter".takeIf { hasNext },
+            promptVisible = preset == SimPreset.NextPromptVisible,
+            dismissed = preset == SimPreset.NextPromptDismissed,
+        ),
     )
 }

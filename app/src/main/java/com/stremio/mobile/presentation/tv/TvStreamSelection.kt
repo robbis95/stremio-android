@@ -41,6 +41,33 @@ internal data class TvStreamTarget(
     }
 }
 
+internal fun nextEpisodeTarget(parent: TvStreamTarget, video: com.stremio.core.types.resource.Video): TvStreamTarget {
+    val info = video.seriesInfo
+    val episodeLabel = if (info != null && info.season > 0 && info.episode > 0) {
+        "S${info.season.toString().padStart(2, '0')}E${info.episode.toString().padStart(2, '0')}"
+    } else null
+    return nextEpisodeTarget(parent, video.id, episodeLabel ?: video.title.takeIf(String::isNotBlank), video.released)
+}
+
+internal fun nextEpisodeTarget(
+    parent: TvStreamTarget,
+    videoId: String,
+    episodeLabel: String?,
+    released: pbandk.wkt.Timestamp? = null,
+): TvStreamTarget = parent.copy(
+        videoId = videoId,
+        episodeLabel = episodeLabel,
+        releaseDate = released?.let { timestamp ->
+            if (timestamp.seconds > 0L) java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault()).format(
+                java.util.Date(timestamp.seconds * 1000L),
+            ) else null
+        },
+        guessStreamPath = false,
+    )
+
+internal fun preferredNextEpisodeOption(options: List<StreamOption>, previous: StreamOption?): StreamOption? =
+    previous?.let { last -> options.firstOrNull { it.addonTitle == last.addonTitle } } ?: options.firstOrNull()
+
 internal enum class TvProviderLoadStatus { Loading, Ready, Error, Unknown }
 
 internal data class TvStreamProviderState(

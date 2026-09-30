@@ -322,6 +322,8 @@ internal fun TvApp(viewModel: MainViewModel) {
                                 viewModel.closeTvPlayback()
                                 routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name
                             },
+                            onPlayNext = { tvPlaybackState.playbackAttemptId?.let(viewModel::playTvNextEpisode) },
+                            onDismissNext = { tvPlaybackState.playbackAttemptId?.let(viewModel::dismissTvNextEpisode) },
                         )
                     }
                 }

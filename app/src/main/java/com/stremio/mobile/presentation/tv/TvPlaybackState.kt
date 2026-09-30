@@ -10,6 +10,45 @@ internal fun newTvPlaybackAttemptId(): String = UUID.randomUUID().toString()
 
 internal enum class TvPlaybackStage { Idle, Resolving, Preparing, Playing, Ended, Error }
 
+internal enum class TvNextEpisodeTransition { Idle, Loading, Failed }
+
+/** Episode prompt/transition state is scoped to a single TV playback attempt. */
+internal data class TvNextEpisodeState(
+    val playbackAttemptId: String? = null,
+    val videoId: String? = null,
+    val episodeLabel: String? = null,
+    val title: String? = null,
+    val promptVisible: Boolean = false,
+    val dismissed: Boolean = false,
+    val automaticEnabled: Boolean = false,
+    val transition: TvNextEpisodeTransition = TvNextEpisodeTransition.Idle,
+    val error: String? = null,
+) {
+    val available: Boolean get() = !videoId.isNullOrBlank()
+}
+
+internal fun tvNextEpisodePromptVisible(
+    positionMs: Long,
+    durationMs: Long,
+    notificationDurationMs: Long,
+    available: Boolean,
+    dismissed: Boolean,
+): Boolean = available && !dismissed && notificationDurationMs > 0L && durationMs > 0L &&
+    (durationMs - positionMs) in 0L..notificationDurationMs
+
+internal fun isCurrentTvNextEpisode(state: TvNextEpisodeState, playbackAttemptId: String): Boolean =
+    state.playbackAttemptId == playbackAttemptId
+
+internal fun tvNextEpisodeDismiss(state: TvNextEpisodeState): TvNextEpisodeState =
+    state.copy(promptVisible = false, dismissed = true)
+
+internal fun tvNextEpisodeTransitionStarted(state: TvNextEpisodeState): TvNextEpisodeState? =
+    if (!state.available || state.transition != TvNextEpisodeTransition.Idle) null
+    else state.copy(promptVisible = false, transition = TvNextEpisodeTransition.Loading, error = null)
+
+internal fun tvShouldAutoAdvanceEnded(ended: Boolean, available: Boolean, bingeWatching: Boolean): Boolean =
+    ended && available && bingeWatching
+
 internal enum class TvPlayerFocusTarget { PlayerSurface, PlayPause, Retry }
 
 internal fun tvPlayerInitialFocusTarget(stage: TvPlaybackStage, firstVisualObserved: Boolean): TvPlayerFocusTarget =
@@ -73,6 +112,7 @@ internal data class TvPlaybackUiState(
     val isBuffering: Boolean = false,
     val runtime: com.stremio.mobile.player.PlayerRuntimeState = com.stremio.mobile.player.PlayerRuntimeState(),
     val skipSegments: TvSkipSegments = TvSkipSegments(),
+    val nextEpisode: TvNextEpisodeState = TvNextEpisodeState(),
 ) {
     val isResolvingOrPreparing: Boolean get() = stage == TvPlaybackStage.Resolving || stage == TvPlaybackStage.Preparing
     val playbackAttemptId: String? get() = attempt?.attemptId

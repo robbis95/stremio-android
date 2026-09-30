@@ -14,6 +14,8 @@ class TvPlaybackLabStateTest {
         val paused = labState(SimPreset.Paused, 10_000L, 600_000L, 30_000L)
         val error = labState(SimPreset.Error, 10_000L, 600_000L, 30_000L)
         val ended = labState(SimPreset.Ended, 10_000L, 600_000L, 30_000L)
+        val intro = labState(SimPreset.IntroActive, 100_000L, 1_800_000L, 300_000L)
+        val outro = labState(SimPreset.OutroActive, 1_650_000L, 1_800_000L, 1_700_000L)
 
         assertEquals(TvPlaybackStage.Preparing, starting.stage)
         assertFalse(starting.firstVisualObserved)
@@ -24,6 +26,10 @@ class TvPlaybackLabStateTest {
         assertEquals(TvPlaybackStage.Error, error.stage)
         assertEquals(TvPlaybackStage.Ended, ended.stage)
         assertEquals(600_000L, ended.runtime.positionMs)
+        assertTrue(intro.runtime.isPlaying)
+        assertTrue(outro.runtime.isPlaying)
+        assertEquals(90_000L, intro.skipSegments.intro?.startMs)
+        assertEquals(1_620_000L, outro.skipSegments.outroStartMs)
     }
 
     @Test

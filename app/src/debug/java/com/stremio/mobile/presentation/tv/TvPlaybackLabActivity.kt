@@ -45,15 +45,25 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 private const val SIM_DURATION_MS = 30 * 60 * 1000L
+private const val SAMPLE_MP4_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
+private const val SAMPLE_HLS_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+private const val LOCAL_MAC_URL = "http://10.0.2.2:8080/sample.mp4"
 private val SIM_SKIP_SEGMENTS = TvSkipSegments(
     intro = TvSkipSegment(startMs = 90_000L, endMs = 150_000L),
     outroStartMs = 27 * 60 * 1000L,
 )
 
 private enum class LabMode { RealMedia, SimulatedState }
+private enum class MediaPreset(val label: String, val url: String?) {
+    SampleMp4("Sample MP4", SAMPLE_MP4_URL),
+    SampleHls("Sample HLS", SAMPLE_HLS_URL),
+    LocalMac("Local Mac", LOCAL_MAC_URL),
+    CustomUrl("Custom URL", null),
+}
 internal enum class SimPreset(val label: String) {
     Starting("Starting"), Buffering("Buffering"), Playing("Playing"),
     Paused("Paused"), Error("Error"), Ended("Ended"),
+    IntroActive("Intro active"), OutroActive("Outro active"),
 }
 
 class TvPlaybackLabActivity : ComponentActivity() {
@@ -73,10 +83,11 @@ class TvPlaybackLabActivity : ComponentActivity() {
 
 @Composable
 private fun PlaybackLab(playbackManager: PlaybackManager) {
-    var mode by remember { mutableStateOf(LabMode.SimulatedState) }
+    var mode by remember { mutableStateOf(LabMode.RealMedia) }
     var preset by remember { mutableStateOf(SimPreset.Playing) }
-    var url by remember { mutableStateOf("http://10.0.2.2:8080/sample.mp4") }
-    var title by remember { mutableStateOf("Playback Lab sample") }
+    var mediaPreset by remember { mutableStateOf(MediaPreset.SampleMp4) }
+    var url by remember { mutableStateOf("") }
+    var title by remember { mutableStateOf("") }
     var positionInput by remember { mutableStateOf("120000") }
     var durationInput by remember { mutableStateOf(SIM_DURATION_MS.toString()) }
     var bufferedInput by remember { mutableStateOf("600000") }
@@ -89,7 +100,12 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
     )
     fun applyPreset(next: SimPreset) {
         preset = next
-        val initialPosition = positionInput.toLongOrNull()?.coerceAtLeast(0L) ?: 120_000L
+        val presetPosition = when (next) {
+            SimPreset.IntroActive -> 100_000L
+            SimPreset.OutroActive -> (SIM_SKIP_SEGMENTS.outroStartMs ?: 27 * 60 * 1000L) + 30_000L
+            else -> positionInput.toLongOrNull()?.coerceAtLeast(0L) ?: 120_000L
+        }
+        val initialPosition = presetPosition
         val duration = durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS
         val buffered = bufferedInput.toLongOrNull()?.coerceAtLeast(0L) ?: initialPosition
         playbackState = labState(next, initialPosition, duration, buffered).copy(attempt = playbackState.attempt)
@@ -194,12 +210,39 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             Button(onClick = { mode = LabMode.SimulatedState }) { Text("Simulated State") }
         }
         if (mode == LabMode.RealMedia) {
-            OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("MP4 or HLS URL") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
-            Text("Cleartext HTTP is enabled only in debug. Emulator host example: 10.0.2.2.", color = TvColors.secondaryText)
+            Text("Media source", color = TvColors.primaryText, style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MediaPreset.entries.forEach { source ->
+                    Button(onClick = {
+                        if (source == MediaPreset.CustomUrl && mediaPreset != MediaPreset.CustomUrl) url = ""
+                        mediaPreset = source
+                    }) { Text(if (mediaPreset == source) "✓ ${source.label}" else source.label) }
+                }
+            }
+            val selectedUrl = mediaPreset.url ?: url.trim()
+            Text(
+                when (mediaPreset) {
+                    MediaPreset.SampleMp4 -> "Big Buck Bunny · 10 seconds · H.264 MP4"
+                    MediaPreset.SampleHls -> "Mux public HLS test stream · H.264/AAC variants"
+                    MediaPreset.LocalMac -> "Emulator host: serve sample.mp4 at 10.0.2.2:8080"
+                    MediaPreset.CustomUrl -> "Enter an HTTP or HTTPS media URL."
+                },
+                color = TvColors.secondaryText,
+            )
+            if (mediaPreset == MediaPreset.CustomUrl) {
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("MP4 or HLS URL") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title (optional)") }, modifier = Modifier.fillMaxWidth())
+            }
+            Text("Cleartext HTTP is enabled only in debug.", color = TvColors.secondaryText)
             Button(onClick = {
-                val uri = runCatching { Uri.parse(url.trim()) }.getOrNull() ?: return@Button
+                val uri = runCatching { Uri.parse(selectedUrl) }.getOrNull() ?: return@Button
                 if (uri.scheme !in setOf("http", "https")) return@Button
+                val playbackTitle = when (mediaPreset) {
+                    MediaPreset.SampleMp4 -> "Sample MP4 · Big Buck Bunny"
+                    MediaPreset.SampleHls -> "Sample HLS · Mux test stream"
+                    MediaPreset.LocalMac -> "Local Mac sample"
+                    MediaPreset.CustomUrl -> title.ifBlank { selectedUrl }
+                }
                 playbackManager.setPlaybackEventListener { event ->
                     when (event) {
                         is PlayerPlaybackEvent.FirstVisualFrame -> playbackState = playbackState.copy(
@@ -211,20 +254,20 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                     }
                 }
                 playbackState = labState(SimPreset.Starting, 0L, 0L, 0L).copy(
-                    attempt = labAttempt(title.ifBlank { url }),
+                    attempt = labAttempt(playbackTitle),
                 )
-                runCatching { playbackManager.load(uri, title.ifBlank { "Direct media" }) }
+                runCatching { playbackManager.load(uri, playbackTitle) }
                     .onSuccess { player = playbackManager.getPlayer() }
                     .onFailure { playbackState = playbackState.copy(stage = TvPlaybackStage.Error, error = it.message) }
                 inPlayer = true
-            }) { Text("Open real player") }
+            }) { Text("Play") }
         } else {
             Text("Preset", color = TvColors.primaryText, style = MaterialTheme.typography.titleMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SimPreset.entries.take(3).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
+                SimPreset.entries.take(4).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SimPreset.entries.drop(3).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
+                SimPreset.entries.drop(4).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(positionInput, { positionInput = it }, label = { Text("Position ms") }, modifier = Modifier.weight(1f))
@@ -260,14 +303,14 @@ private fun labAttempt(label: String) = TvPlaybackAttempt(
 internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, bufferedMs: Long): TvPlaybackUiState {
     val stage = when (preset) {
         SimPreset.Starting -> TvPlaybackStage.Preparing
-        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused -> TvPlaybackStage.Playing
+        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.IntroActive, SimPreset.OutroActive -> TvPlaybackStage.Playing
         SimPreset.Error -> TvPlaybackStage.Error
         SimPreset.Ended -> TvPlaybackStage.Ended
     }
-    val playing = preset == SimPreset.Playing
+    val playing = preset in setOf(SimPreset.Playing, SimPreset.IntroActive, SimPreset.OutroActive)
     val buffering = preset == SimPreset.Buffering
     val ended = preset == SimPreset.Ended
-    val firstVisual = preset in setOf(SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.Ended)
+    val firstVisual = preset in setOf(SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.Ended, SimPreset.IntroActive, SimPreset.OutroActive)
     val runtime = PlayerRuntimeState(
         isPlaying = playing,
         isBuffering = buffering,

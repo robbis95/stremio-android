@@ -12,12 +12,16 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -28,6 +32,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.outlined.Audiotrack
+import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.FastForward
 import androidx.compose.material.icons.outlined.FastRewind
 import androidx.compose.material.icons.outlined.SkipNext
@@ -66,13 +72,16 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import androidx.activity.compose.BackHandler
+import com.stremio.mobile.player.PlayerTrackOption
 import com.stremio.mobile.data.model.tvIntroSkipTarget
 import com.stremio.mobile.data.model.tvOutroSkipTarget
 import com.stremio.mobile.player.Player
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import kotlinx.coroutines.delay
 
-private enum class TvPlayerControl { Rewind, PlayPause, Forward, SkipIntro, SkipOutro }
+private enum class TvPlayerControl { Rewind, PlayPause, Forward, SkipIntro, SkipOutro, Audio, Subtitles }
+private enum class TvTrackPanel { Audio, Subtitles }
 
 @Composable
 internal fun TvPlayerScreen(
@@ -84,10 +93,14 @@ internal fun TvPlayerScreen(
     onSeekTo: (Long) -> Unit,
     onRetry: () -> Unit,
     onBack: () -> Unit,
+    onAudioTrackSelected: (PlayerTrackOption) -> Unit,
+    onSubtitleTrackSelected: (PlayerTrackOption) -> Unit,
+    onSubtitlesDisabled: () -> Unit,
 ) {
     var controlsVisible by remember(state.playbackAttemptId) { mutableStateOf(true) }
     var controlsActivity by remember(state.playbackAttemptId) { mutableIntStateOf(0) }
     var lastFocusedControl by remember(state.playbackAttemptId) { mutableStateOf(TvPlayerControl.PlayPause) }
+    var trackPanel by remember(state.playbackAttemptId) { mutableStateOf<TvTrackPanel?>(null) }
     val rewindRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val playPauseRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val forwardRequester = remember(state.playbackAttemptId) { FocusRequester() }
@@ -96,8 +109,25 @@ internal fun TvPlayerScreen(
     val retryRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val backRequester = remember(state.playbackAttemptId) { FocusRequester() }
     val rootRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val audioRequester = remember(state.playbackAttemptId) { FocusRequester() }
+    val subtitlesRequester = remember(state.playbackAttemptId) { FocusRequester() }
 
-    LaunchedEffect(state.stage, state.runtime.isPlaying, state.isBuffering, controlsVisible, controlsActivity) {
+    BackHandler(enabled = trackPanel != null) {
+        trackPanel = null
+        controlsVisible = true
+        runCatching {
+            (if (lastFocusedControl == TvPlayerControl.Audio) audioRequester else subtitlesRequester).requestFocus()
+        }
+    }
+
+    fun closeTrackPanel(panel: TvTrackPanel) {
+        trackPanel = null
+        controlsVisible = true
+        runCatching { (if (panel == TvTrackPanel.Audio) audioRequester else subtitlesRequester).requestFocus() }
+    }
+
+    LaunchedEffect(state.stage, state.runtime.isPlaying, state.isBuffering, controlsVisible, controlsActivity, trackPanel) {
+        if (trackPanel != null) return@LaunchedEffect
         if (controlsVisible && state.stage == TvPlaybackStage.Playing && state.runtime.isPlaying && !state.isBuffering) {
             delay(5_000)
             controlsVisible = false
@@ -114,6 +144,8 @@ internal fun TvPlayerScreen(
                 forwardRequester,
                 skipIntroRequester,
                 skipOutroRequester,
+                audioRequester,
+                subtitlesRequester,
             )
             else -> runCatching { rootRequester.requestFocus() }
         }
@@ -191,10 +223,31 @@ internal fun TvPlayerScreen(
                 forwardRequester = forwardRequester,
                 skipIntroRequester = skipIntroRequester,
                 skipOutroRequester = skipOutroRequester,
+                audioRequester = audioRequester,
+                subtitlesRequester = subtitlesRequester,
+                trackPanel = trackPanel,
+                onOpenTrackPanel = { panel, control ->
+                    lastFocusedControl = control
+                    trackPanel = panel
+                    controlsVisible = true
+                },
                 onActivity = { controlsActivity++ },
                 onTogglePlayback = onTogglePlayback,
                 onSeek = onSeek,
                 onSeekTo = onSeekTo,
+            )
+        }
+
+        trackPanel?.let { panel ->
+            val tracks = if (panel == TvTrackPanel.Audio) state.runtime.audioTracks else state.runtime.subtitleTracks
+            TvTrackSelectionPanel(
+                panel = panel,
+                tracks = tracks,
+                subtitlesDisabled = state.runtime.subtitlesDisabled,
+                onDismiss = { closeTrackPanel(panel) },
+                onSelectAudio = { track -> onAudioTrackSelected(track); closeTrackPanel(panel) },
+                onSelectSubtitle = { track -> onSubtitleTrackSelected(track); closeTrackPanel(panel) },
+                onDisableSubtitles = { onSubtitlesDisabled(); closeTrackPanel(panel) },
             )
         }
 
@@ -220,6 +273,10 @@ private fun TvPlayerControls(
     forwardRequester: FocusRequester,
     skipIntroRequester: FocusRequester,
     skipOutroRequester: FocusRequester,
+    audioRequester: FocusRequester,
+    subtitlesRequester: FocusRequester,
+    trackPanel: TvTrackPanel?,
+    onOpenTrackPanel: (TvTrackPanel, TvPlayerControl) -> Unit,
     onActivity: () -> Unit,
     onTogglePlayback: () -> Unit,
     onSeek: (Long) -> Unit,
@@ -302,7 +359,158 @@ private fun TvPlayerControls(
                 onClick = { onSeek(seekDurationMs) },
             )
         }
+        if (state.runtime.audioTracks.isNotEmpty() || state.runtime.subtitleTracks.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                if (state.runtime.audioTracks.isNotEmpty()) {
+                    TvSecondaryAction(
+                        text = "Audio", icon = Icons.Outlined.Audiotrack, requester = audioRequester,
+                        focused = lastFocusedControl == TvPlayerControl.Audio && trackPanel == null,
+                        selected = state.runtime.audioTracks.firstOrNull { it.selected }?.let(::trackSummary),
+                        onFocus = { onFocused(TvPlayerControl.Audio) }, onActivity = onActivity,
+                        onClick = { onOpenTrackPanel(TvTrackPanel.Audio, TvPlayerControl.Audio) },
+                    )
+                }
+                if (state.runtime.audioTracks.isNotEmpty() && state.runtime.subtitleTracks.isNotEmpty()) Spacer(Modifier.width(12.dp))
+                if (state.runtime.subtitleTracks.isNotEmpty()) {
+                    TvSecondaryAction(
+                        text = "Subtitles", icon = Icons.Outlined.Subtitles, requester = subtitlesRequester,
+                        focused = lastFocusedControl == TvPlayerControl.Subtitles && trackPanel == null,
+                        selected = if (state.runtime.subtitlesDisabled) "Off" else state.runtime.subtitleTracks.firstOrNull { it.selected }?.let(::trackSummary),
+                        onFocus = { onFocused(TvPlayerControl.Subtitles) }, onActivity = onActivity,
+                        onClick = { onOpenTrackPanel(TvTrackPanel.Subtitles, TvPlayerControl.Subtitles) },
+                    )
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun TvSecondaryAction(
+    text: String,
+    icon: ImageVector,
+    requester: FocusRequester,
+    focused: Boolean,
+    selected: String?,
+    onFocus: () -> Unit,
+    onActivity: () -> Unit,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier.clip(RoundedCornerShape(20.dp))
+            .background(if (focused) Color.White.copy(alpha = 0.2f) else Color.Black.copy(alpha = 0.42f))
+            .border(if (focused) 2.dp else 1.dp, if (focused) TvColors.onMedia else Color.White.copy(alpha = 0.36f), RoundedCornerShape(20.dp))
+            .focusRequester(requester)
+            .onFocusChanged { if (it.isFocused) onFocus() }
+            .focusable()
+            .onPreviewKeyEvent { e -> if (e.type == KeyEventType.KeyDown && e.key in setOf(Key.Enter, Key.DirectionCenter, Key.NumPadEnter)) { onActivity(); onClick(); true } else false }
+            .padding(horizontal = 18.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        androidx.compose.material3.Icon(icon, contentDescription = null, tint = TvColors.onMedia, modifier = Modifier.size(20.dp))
+        Column {
+            Text(text, color = TvColors.onMedia, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            if (!selected.isNullOrBlank()) Text(selected, color = TvColors.mediaSecondary, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+        }
+    }
+}
+
+private data class TvTrackRow(val id: String, val title: String, val detail: String?, val selected: Boolean, val track: PlayerTrackOption? = null)
+
+@Composable
+private fun TvTrackSelectionPanel(
+    panel: TvTrackPanel,
+    tracks: List<PlayerTrackOption>,
+    subtitlesDisabled: Boolean,
+    onDismiss: () -> Unit,
+    onSelectAudio: (PlayerTrackOption) -> Unit,
+    onSelectSubtitle: (PlayerTrackOption) -> Unit,
+    onDisableSubtitles: () -> Unit,
+) {
+    val rows = buildList {
+        if (panel == TvTrackPanel.Subtitles) add(TvTrackRow("off", "Off", "No subtitles", subtitlesDisabled))
+        tracks.forEach { track ->
+            val selected = track.selected && (panel != TvTrackPanel.Subtitles || !subtitlesDisabled)
+            val origin = if (panel == TvTrackPanel.Subtitles) subtitleOriginLabel(track) else null
+            val language = track.language?.takeIf { it.isNotBlank() && !track.label.contains(it, ignoreCase = true) }
+            val detail = listOfNotNull(language, origin).joinToString(" · ").ifBlank { null }
+            add(TvTrackRow(track.id, track.label.ifBlank { track.language ?: "Track" }, detail, selected, track))
+        }
+    }
+    val selectedRow = rows.firstOrNull { it.selected } ?: rows.firstOrNull()
+    val selectedRequester = remember(panel, selectedRow?.id) { FocusRequester() }
+    LaunchedEffect(panel, selectedRow?.id) { runCatching { selectedRequester.requestFocus() } }
+
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)).zIndex(3f), contentAlignment = Alignment.CenterEnd) {
+        Column(
+            Modifier.fillMaxHeight().padding(top = 28.dp, bottom = 28.dp, end = 28.dp)
+                .width(510.dp).clip(RoundedCornerShape(26.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xF20B0D12), Color(0xF20B0D12), Color(0xE8171B23))))
+                .border(1.dp, Color.White.copy(alpha = 0.14f), RoundedCornerShape(26.dp))
+                .padding(horizontal = 28.dp, vertical = 26.dp)
+                .focusGroup(),
+        ) {
+            Text(if (panel == TvTrackPanel.Audio) "Audio" else "Subtitles", color = TvColors.onMedia, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            Text(if (panel == TvTrackPanel.Audio) "Choose an audio language" else "Choose a subtitle track", color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyMedium)
+            Spacer(Modifier.height(18.dp))
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                rows.forEach { row ->
+                    TvTrackRowItem(
+                        row = row,
+                        requester = if (row.id == selectedRow?.id) selectedRequester else null,
+                        onSelect = {
+                            when {
+                                panel == TvTrackPanel.Audio && row.track != null -> onSelectAudio(row.track)
+                                panel == TvTrackPanel.Subtitles && row.id == "off" -> onDisableSubtitles()
+                                row.track != null -> onSelectSubtitle(row.track)
+                            }
+                        },
+                        onBack = onDismiss,
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Text("↑  ↓  Browse     OK  Select     Back  Close", color = TvColors.mediaSecondary, style = MaterialTheme.typography.labelMedium)
+        }
+    }
+}
+
+@Composable
+private fun TvTrackRowItem(row: TvTrackRow, requester: FocusRequester?, onSelect: () -> Unit, onBack: () -> Unit) {
+    var focused by remember(row.id) { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().height(62.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (focused) Color.White.copy(alpha = 0.17f) else Color.White.copy(alpha = 0.035f))
+            .border(if (focused) 2.dp else 1.dp, if (focused) TvColors.onMedia else Color.White.copy(alpha = 0.07f), RoundedCornerShape(14.dp))
+            .then(if (requester != null) Modifier.focusRequester(requester) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .focusable()
+            .onPreviewKeyEvent { e ->
+                if (e.type != KeyEventType.KeyDown) false else when {
+                    e.key in setOf(Key.Enter, Key.DirectionCenter, Key.NumPadEnter) -> { onSelect(); true }
+                    e.key == Key.Back || e.key == Key.Escape -> { onBack(); true }
+                    else -> false
+                }
+            }
+            .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(row.title, color = TvColors.onMedia, style = MaterialTheme.typography.bodyLarge, fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Medium, maxLines = 1)
+            row.detail?.let { Text(it, color = TvColors.mediaSecondary, style = MaterialTheme.typography.labelMedium, maxLines = 1) }
+        }
+        if (row.selected) Text("✓", color = TvColors.accent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+    }
+}
+
+private fun trackSummary(track: PlayerTrackOption): String = track.language?.takeIf(String::isNotBlank) ?: track.label
+
+private fun subtitleOriginLabel(track: PlayerTrackOption): String = when {
+    track.origin.equals("EXTERNAL", true) || track.origin.equals("ADDON", true) || !track.embedded -> "Add-on"
+    track.origin.equals("LOCAL", true) || track.local -> "Local"
+    else -> "On this video"
 }
 
 @Composable
@@ -502,6 +710,8 @@ private fun requestControlFocus(
     forward: FocusRequester,
     skipIntro: FocusRequester,
     skipOutro: FocusRequester,
+    audio: FocusRequester,
+    subtitles: FocusRequester,
 ) {
     val requester = when (control) {
         TvPlayerControl.Rewind -> rewind
@@ -509,6 +719,8 @@ private fun requestControlFocus(
         TvPlayerControl.Forward -> forward
         TvPlayerControl.SkipIntro -> skipIntro
         TvPlayerControl.SkipOutro -> skipOutro
+        TvPlayerControl.Audio -> audio
+        TvPlayerControl.Subtitles -> subtitles
     }
     runCatching { requester.requestFocus() }.onFailure { runCatching { playPause.requestFocus() } }
 }

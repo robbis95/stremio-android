@@ -38,6 +38,8 @@ import com.stremio.mobile.player.Player
 import com.stremio.mobile.player.PlayerEngine
 import com.stremio.mobile.player.PlayerPlaybackEvent
 import com.stremio.mobile.player.PlayerRuntimeState
+import com.stremio.mobile.player.PlayerTrackOption
+import com.stremio.mobile.player.PlayerTrackType
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvTheme
 import kotlinx.coroutines.delay
@@ -51,6 +53,17 @@ private const val LOCAL_MAC_URL = "http://10.0.2.2:8080/sample.mp4"
 private val SIM_SKIP_SEGMENTS = TvSkipSegments(
     intro = TvSkipSegment(startMs = 90_000L, endMs = 150_000L),
     outroStartMs = 27 * 60 * 1000L,
+)
+private val SIM_AUDIO_TRACKS = listOf(
+    PlayerTrackOption("lab-audio-en", PlayerTrackType.AUDIO, "English", "English", selected = true, languageCode = "eng"),
+    PlayerTrackOption("lab-audio-sv", PlayerTrackType.AUDIO, "Swedish", "Swedish", selected = false, languageCode = "swe"),
+    PlayerTrackOption("lab-audio-es", PlayerTrackType.AUDIO, "Spanish", "Spanish", selected = false, languageCode = "spa"),
+)
+private val SIM_SUBTITLE_TRACKS = listOf(
+    PlayerTrackOption("lab-sub-en", PlayerTrackType.SUBTITLE, "English", "English", selected = false, languageCode = "eng"),
+    PlayerTrackOption("lab-sub-sv", PlayerTrackType.SUBTITLE, "Swedish", "Swedish", selected = false, languageCode = "swe"),
+    PlayerTrackOption("lab-sub-es", PlayerTrackType.SUBTITLE, "Spanish", "Spanish", selected = false, languageCode = "spa"),
+    PlayerTrackOption("lab-sub-addon", PlayerTrackType.SUBTITLE, "English SDH", "English", selected = false, languageCode = "eng", origin = "EXTERNAL", url = "https://example.invalid/subtitles.vtt", embedded = false),
 )
 
 private enum class LabMode { RealMedia, SimulatedState }
@@ -187,6 +200,24 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 if (mode == LabMode.RealMedia) player?.seekTo(target)
                 else updateRuntime { it.copy(positionMs = target.coerceIn(0L, it.durationMs)) }
             },
+            onAudioTrackSelected = { track ->
+                if (mode == LabMode.SimulatedState) updateRuntime {
+                    it.copy(audioTracks = it.audioTracks.map { option -> option.copy(selected = option.id == track.id) })
+                }
+            },
+            onSubtitleTrackSelected = { track ->
+                if (mode == LabMode.SimulatedState) updateRuntime {
+                    it.copy(
+                        subtitleTracks = it.subtitleTracks.map { option -> option.copy(selected = option.id == track.id) },
+                        subtitlesDisabled = false,
+                    )
+                }
+            },
+            onSubtitlesDisabled = {
+                if (mode == LabMode.SimulatedState) updateRuntime {
+                    it.copy(subtitleTracks = it.subtitleTracks.map { option -> option.copy(selected = false) }, subtitlesDisabled = true)
+                }
+            },
             onRetry = {
                 if (mode == LabMode.RealMedia) {
                     player?.retry()
@@ -319,6 +350,9 @@ internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, buf
         bufferedPositionMs = bufferedMs.coerceAtMost(durationMs.takeIf { it > 0 } ?: bufferedMs),
         ended = ended,
         error = if (preset == SimPreset.Error) "Simulated playback failure" else null,
+        audioTracks = SIM_AUDIO_TRACKS,
+        subtitleTracks = SIM_SUBTITLE_TRACKS,
+        subtitlesDisabled = true,
     )
     return TvPlaybackUiState(
         stage = stage,

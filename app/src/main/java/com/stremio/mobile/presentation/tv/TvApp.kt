@@ -297,6 +297,18 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onSeek = viewModel::seekTvPlaybackBy,
                             onSeekTo = viewModel::seekTvPlaybackTo,
                             onRetry = viewModel::retryTvPlayback,
+                            onAudioTrackSelected = { track ->
+                                viewModel.tvPlaybackPlayer()?.selectAudioTrack(track.id)
+                                viewModel.rememberAudioTrack(track)
+                            },
+                            onSubtitleTrackSelected = { track ->
+                                viewModel.tvPlaybackPlayer()?.selectSubtitleTrack(track.id)
+                                viewModel.rememberSubtitleTrack(track)
+                            },
+                            onSubtitlesDisabled = {
+                                viewModel.tvPlaybackPlayer()?.disableSubtitles()
+                                viewModel.rememberSubtitlesDisabled()
+                            },
                             onBack = {
                                 viewModel.closeTvPlayback()
                                 routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name

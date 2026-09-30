@@ -120,7 +120,7 @@ class ExoStreamPlayer(
     private var listener: androidx.media3.common.Player.Listener = createListener(currentGeneration)
 
     init {
-        android.util.Log.d("PlaybackReuse", "Exo created instance=$instanceId")
+        playbackReuseLog("Exo created instance=$instanceId")
         exoPlayer.addListener(listener)
         scope.launch {
             while (isActive) {
@@ -170,7 +170,7 @@ class ExoStreamPlayer(
         itemState.subtitles = subtitles
         itemState.preferredSubtitleLang = preferredSubtitleLang
 
-        android.util.Log.d("PlaybackReuse", "Exo load instance=$instanceId generation=$generation item=item-$generation")
+        playbackReuseLog("Exo load instance=$instanceId generation=$generation item=item-$generation")
         val mediaItem = buildMediaItem(uri, subtitles, preferredSubtitleLang)
         exoPlayer.setMediaItem(mediaItem, startPositionMs)
         exoPlayer.prepare()
@@ -278,7 +278,7 @@ class ExoStreamPlayer(
         playerView?.player = null
         playerView = null
         exoPlayer.removeListener(listener)
-        android.util.Log.d("PlaybackReuse", "Exo released instance=$instanceId generation=$currentGeneration")
+        playbackReuseLog("Exo released instance=$instanceId generation=$currentGeneration")
         exoPlayer.release()
         mutableRuntimeState.value = PlayerRuntimeState()
     }
@@ -313,7 +313,7 @@ class ExoStreamPlayer(
 
         override fun onRenderedFirstFrame() {
             if (!isCurrentLoad() || !firstVisualSignal.tryEmit()) return
-            android.util.Log.d("PlaybackReuse", "Exo first-visual instance=$instanceId generation=$generation item=item-$generation")
+            playbackReuseLog("Exo first-visual instance=$instanceId generation=$generation item=item-$generation")
             playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
         }
 

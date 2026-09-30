@@ -48,7 +48,7 @@ class PlaybackManager(
         }
         val fallbackMessage = if (engine == PlayerEngine.MPV) "MPV unavailable; using ExoPlayer." else null
         if (reusable != null) {
-            android.util.Log.d("PlaybackReuse", "switch-requested engine=EXO reuse=true instance=${reusable.instanceId}")
+            playbackReuseLog("switch-requested engine=EXO reuse=true instance=${reusable.instanceId}")
             reusable.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
             // Keep the previous attempt's listener authoritative throughout Core resolution.
             // Exo load advances its item generation synchronously; publish the new owner now.
@@ -56,7 +56,7 @@ class PlaybackManager(
             reusable.play()
             player = reusable
         } else {
-            android.util.Log.d("PlaybackReuse", "switch-requested engine=${engine.name} reuse=false")
+            playbackReuseLog("switch-requested engine=${engine.name} reuse=false")
             player = runCatching {
                 playerFactory(context, engine, settings).also {
                     it.setPlaybackEventListener(playbackEventListener)
@@ -140,4 +140,8 @@ internal fun selectReusablePlayer(
     findReusableExoPlayer(player, requestedEngine, requestedConfiguration)
 } else {
     null
+}
+
+internal fun playbackReuseLog(message: String) {
+    if (com.stremio.mobile.BuildConfig.DEBUG) android.util.Log.d("PlaybackReuse", message)
 }

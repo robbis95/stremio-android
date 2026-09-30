@@ -2,6 +2,7 @@ package com.stremio.mobile.presentation.tv
 
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
@@ -50,6 +51,8 @@ import kotlinx.coroutines.flow.StateFlow
 private const val SIM_DURATION_MS = 30 * 60 * 1000L
 private const val SAMPLE_MP4_URL = "https://test-videos.co.uk/vids/bigbuckbunny/mp4/h264/360/Big_Buck_Bunny_360_10s_1MB.mp4"
 private const val SAMPLE_HLS_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"
+private const val REUSE_ITEM_A_URL = SAMPLE_MP4_URL
+private const val REUSE_ITEM_B_URL = SAMPLE_HLS_URL
 private const val LOCAL_MAC_URL = "http://10.0.2.2:8080/sample.mp4"
 private val SIM_SKIP_SEGMENTS = TvSkipSegments(
     intro = TvSkipSegment(startMs = 90_000L, endMs = 150_000L),
@@ -145,6 +148,34 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
         inPlayer = false
     }
 
+    fun loadReuseExperiment(label: String, mediaUrl: String, reuse: Boolean) {
+        val startedAt = System.nanoTime()
+        val experimentId = newTvPlaybackAttemptId()
+        playbackManager.setPlaybackEventListener { event ->
+            when (event) {
+                is PlayerPlaybackEvent.FirstVisualFrame -> {
+                    val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+                    Log.d("PlaybackReuseLab", "first-visual item=$label mode=${if (reuse) "reuse" else "cold"} elapsedMs=$elapsedMs")
+                    playbackState = playbackState.copy(stage = TvPlaybackStage.Playing, firstVisualObserved = true)
+                }
+                is PlayerPlaybackEvent.PlaybackError -> playbackState = playbackState.copy(stage = TvPlaybackStage.Error, error = event.category)
+            }
+        }
+        playbackState = labState(SimPreset.Starting, 0L, 0L, 0L).copy(
+            attempt = labAttempt("Reuse experiment $label").copy(attemptId = experimentId, startedAtNanos = startedAt),
+        )
+        runCatching {
+            playbackManager.load(
+                uri = Uri.parse(mediaUrl),
+                title = "Reuse experiment $label",
+                engine = PlayerEngine.EXO,
+                reuseExoPlayer = reuse,
+            )
+        }.onSuccess { player = playbackManager.getPlayer() }
+            .onFailure { playbackState = playbackState.copy(stage = TvPlaybackStage.Error, error = it.message) }
+        inPlayer = true
+    }
+
     BackHandler(enabled = inPlayer) { leavePlayer() }
 
     LaunchedEffect(inPlayer, mode, preset) {
@@ -185,6 +216,7 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 else -> playbackState.stage
             },
         )
+        androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         TvPlayerScreen(
             state = currentState,
             player = player,
@@ -261,6 +293,17 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 playbackState = playbackState.copy(nextEpisode = tvNextEpisodeDismiss(playbackState.nextEpisode))
             },
         )
+        if (mode == LabMode.RealMedia) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Button(onClick = { loadReuseExperiment("A", REUSE_ITEM_A_URL, reuse = false) }) { Text("Load A") }
+                Button(onClick = { loadReuseExperiment("B", REUSE_ITEM_B_URL, reuse = true) }) { Text("B · reuse Exo") }
+                Button(onClick = { loadReuseExperiment("B", REUSE_ITEM_B_URL, reuse = false) }) { Text("B · cold Exo") }
+            }
+        }
+        }
         return
     }
 
@@ -300,6 +343,12 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title (optional)") }, modifier = Modifier.fillMaxWidth())
             }
             Text("Cleartext HTTP is enabled only in debug.", color = TvColors.secondaryText)
+            Text("Reuse experiment: A is public H.264 MP4; B is public HLS. Logcat tag: PlaybackReuseLab.", color = TvColors.secondaryText)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { loadReuseExperiment("A", REUSE_ITEM_A_URL, reuse = false) }) { Text("Start A") }
+                Button(onClick = { loadReuseExperiment("B", REUSE_ITEM_B_URL, reuse = true) }) { Text("Switch to B · reuse") }
+                Button(onClick = { loadReuseExperiment("B", REUSE_ITEM_B_URL, reuse = false) }) { Text("Cold-load B") }
+            }
             Button(onClick = {
                 val uri = runCatching { Uri.parse(selectedUrl) }.getOrNull() ?: return@Button
                 if (uri.scheme !in setOf("http", "https")) return@Button

@@ -13,6 +13,7 @@ data class PlaybackState(
 
 class PlaybackManager(
     private val context: Context,
+    private val playerFactory: (Context, PlayerEngine, com.stremio.core.types.profile.Profile.Settings?) -> Player = PlayerFactory::create,
 ) {
     private val mutableState = MutableStateFlow(PlaybackState())
     private var player: Player? = null
@@ -24,7 +25,6 @@ class PlaybackManager(
 
     fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) {
         playbackEventListener = listener
-        player?.setPlaybackEventListener(listener)
     }
 
     fun load(
@@ -35,24 +35,42 @@ class PlaybackManager(
         preferredSubtitleLang: String? = null,
         engine: PlayerEngine = PlayerEngine.EXO,
         settings: com.stremio.core.types.profile.Profile.Settings? = null,
+        reuseExoPlayer: Boolean = false,
     ) {
-        player?.release()
-        player = null
-        actualEngine = null
+        val requestedConfiguration = ExoConstructionKey.from(settings)
+        val reusable = selectReusablePlayer(player, engine, requestedConfiguration, reuseExoPlayer)
+
+        if (reusable == null) {
+            player?.setPlaybackEventListener(null)
+            player?.release()
+            player = null
+            actualEngine = null
+        }
         val fallbackMessage = if (engine == PlayerEngine.MPV) "MPV unavailable; using ExoPlayer." else null
-        player = runCatching {
-            PlayerFactory.create(context, engine, settings).also {
-                it.setPlaybackEventListener(playbackEventListener)
-                it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
-                it.play()
-            }
-        }.getOrElse { failure ->
-            if (engine != PlayerEngine.MPV) throw failure
-            ExoStreamPlayer(context, settings).also {
-                it.setPlaybackEventListener(playbackEventListener)
-                it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
-                it.play()
-                it.reportNonFatalError(fallbackMessage)
+        if (reusable != null) {
+            android.util.Log.d("PlaybackReuse", "switch-requested engine=EXO reuse=true instance=${reusable.instanceId}")
+            reusable.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
+            // Keep the previous attempt's listener authoritative throughout Core resolution.
+            // Exo load advances its item generation synchronously; publish the new owner now.
+            reusable.setPlaybackEventListener(playbackEventListener)
+            reusable.play()
+            player = reusable
+        } else {
+            android.util.Log.d("PlaybackReuse", "switch-requested engine=${engine.name} reuse=false")
+            player = runCatching {
+                playerFactory(context, engine, settings).also {
+                    it.setPlaybackEventListener(playbackEventListener)
+                    it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
+                    it.play()
+                }
+            }.getOrElse { failure ->
+                if (engine != PlayerEngine.MPV) throw failure
+                ExoStreamPlayer(context, settings).also {
+                    it.setPlaybackEventListener(playbackEventListener)
+                    it.load(uri, startPositionMs, subtitles, preferredSubtitleLang, settings)
+                    it.play()
+                    it.reportNonFatalError(fallbackMessage)
+                }
             }
         }
         actualEngine = player?.engine
@@ -90,4 +108,36 @@ class PlaybackManager(
     }
 
     fun getPlayer(): Player? = player
+}
+
+data class ExoConstructionKey(
+    val hardwareDecoding: Boolean,
+    val audioPassthrough: Boolean,
+    val surroundSound: Boolean,
+) {
+    companion object {
+        fun from(settings: com.stremio.core.types.profile.Profile.Settings?): ExoConstructionKey = ExoConstructionKey(
+            hardwareDecoding = settings?.hardwareDecoding ?: true,
+            audioPassthrough = settings?.audioPassthrough ?: false,
+            surroundSound = settings?.surroundSound ?: false,
+        )
+    }
+}
+
+internal fun findReusableExoPlayer(
+    player: Player?,
+    requestedEngine: PlayerEngine,
+    requestedConfiguration: ExoConstructionKey,
+): ReusableExoPlayer? = (player as? ReusableExoPlayer)
+    ?.takeIf { requestedEngine == PlayerEngine.EXO && it.engine == PlayerEngine.EXO && it.constructionKey == requestedConfiguration }
+
+internal fun selectReusablePlayer(
+    player: Player?,
+    requestedEngine: PlayerEngine,
+    requestedConfiguration: ExoConstructionKey,
+    reuseOptIn: Boolean,
+): ReusableExoPlayer? = if (reuseOptIn) {
+    findReusableExoPlayer(player, requestedEngine, requestedConfiguration)
+} else {
+    null
 }

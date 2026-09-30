@@ -133,3 +133,29 @@ interface Player {
     fun addLocalSubtitle(track: ExternalSubtitle)
     fun release()
 }
+
+/** Capability marker for explicitly reusable Exo instances. MPV never implements this. */
+internal interface ReusableExoPlayer : Player {
+    val constructionKey: ExoConstructionKey
+    val instanceId: Long
+}
+
+internal class ExoItemState {
+    var uri: Uri? = null
+    var startPositionMs: Long = 0L
+    var subtitles: List<ExternalSubtitle> = emptyList()
+    var preferredSubtitleLang: String? = null
+
+    fun reset() {
+        uri = null
+        startPositionMs = 0L
+        subtitles = emptyList()
+        preferredSubtitleLang = null
+    }
+}
+
+internal class ItemLoadGeneration {
+    private var value = 0L
+    fun begin(): Long = ++value
+    fun isCurrent(generation: Long): Boolean = value == generation
+}

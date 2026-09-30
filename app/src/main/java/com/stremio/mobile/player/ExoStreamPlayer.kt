@@ -38,8 +38,10 @@ import javax.net.ssl.SSLException
 class ExoStreamPlayer(
     context: Context,
     private val settings: com.stremio.core.types.profile.Profile.Settings? = null
-) : Player {
+) : ReusableExoPlayer {
     override val engine: PlayerEngine = PlayerEngine.EXO
+    override val constructionKey: ExoConstructionKey = ExoConstructionKey.from(settings)
+    override val instanceId: Long = nextInstanceId.incrementAndGet()
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -108,44 +110,17 @@ class ExoStreamPlayer(
     }
 
     private var playerView: PlayerView? = null
-    private var currentUri: Uri? = null
-    private var currentStartPositionMs: Long = 0L
-    private var currentSubtitles: List<ExternalSubtitle> = emptyList()
-    private var currentPreferredSubtitleLang: String? = null
     private var currentSubtitleStyle = PlayerSubtitleStyle()
     private val firstVisualSignal = FirstVisualSignalGate()
     private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
 
-    private val listener = object : androidx.media3.common.Player.Listener {
-        override fun onIsPlayingChanged(isPlaying: Boolean) {
-            publishState()
-        }
-
-        override fun onPlaybackStateChanged(playbackState: Int) {
-            publishState(ended = playbackState == androidx.media3.common.Player.STATE_ENDED)
-        }
-
-        override fun onPlayerError(error: PlaybackException) {
-            val message = error.message ?: "Playback failed"
-            publishState(error = message)
-            playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(classifyPlaybackFailure(error)))
-        }
-
-        override fun onRenderedFirstFrame() {
-            if (!firstVisualSignal.tryEmit()) return
-            playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
-        }
-
-        override fun onTracksChanged(tracks: Tracks) {
-            publishState()
-        }
-
-        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
-            publishState()
-        }
-    }
+    private val itemState = ExoItemState()
+    private val itemLoadGeneration = ItemLoadGeneration()
+    private var currentGeneration = 0L
+    private var listener: androidx.media3.common.Player.Listener = createListener(currentGeneration)
 
     init {
+        android.util.Log.d("PlaybackReuse", "Exo created instance=$instanceId")
         exoPlayer.addListener(listener)
         scope.launch {
             while (isActive) {
@@ -156,11 +131,15 @@ class ExoStreamPlayer(
     }
 
     override fun createView(context: Context): View {
+        // A keyed Compose AndroidView can be replaced while this player survives. Detach
+        // the old output before attaching the new PlayerView so only one surface is active.
+        val resizeMode = playerView?.resizeMode ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
+        playerView?.player = null
         return PlayerView(context).apply {
             useController = false
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
             keepScreenOn = true
-            resizeMode = playerView?.resizeMode ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
+            this.resizeMode = resizeMode
             player = exoPlayer
             playerView = this
             applySubtitleStyleToView()
@@ -178,12 +157,20 @@ class ExoStreamPlayer(
         preferredSubtitleLang: String?,
         settings: com.stremio.core.types.profile.Profile.Settings?,
     ) {
+        val previousListener = listener
+        val generation = itemLoadGeneration.begin()
+        currentGeneration = generation
+        exoPlayer.removeListener(previousListener)
+        listener = createListener(generation)
+        exoPlayer.addListener(listener)
+        resetItemState()
         firstVisualSignal.reset()
-        currentUri = uri
-        currentStartPositionMs = startPositionMs
-        currentSubtitles = subtitles
-        currentPreferredSubtitleLang = preferredSubtitleLang
+        itemState.uri = uri
+        itemState.startPositionMs = startPositionMs
+        itemState.subtitles = subtitles
+        itemState.preferredSubtitleLang = preferredSubtitleLang
 
+        android.util.Log.d("PlaybackReuse", "Exo load instance=$instanceId generation=$generation item=item-$generation")
         val mediaItem = buildMediaItem(uri, subtitles, preferredSubtitleLang)
         exoPlayer.setMediaItem(mediaItem, startPositionMs)
         exoPlayer.prepare()
@@ -193,9 +180,9 @@ class ExoStreamPlayer(
     override fun retry() {
         firstVisualSignal.reset()
         mutableRuntimeState.value = mutableRuntimeState.value.copy(error = null, ended = false)
-        currentUri?.let { uri ->
-            val resumePosition = exoPlayer.currentPosition.coerceAtLeast(currentStartPositionMs)
-            exoPlayer.setMediaItem(buildMediaItem(uri, currentSubtitles, currentPreferredSubtitleLang), resumePosition)
+        itemState.uri?.let { uri ->
+            val resumePosition = exoPlayer.currentPosition.coerceAtLeast(itemState.startPositionMs)
+            exoPlayer.setMediaItem(buildMediaItem(uri, itemState.subtitles, itemState.preferredSubtitleLang), resumePosition)
         }
         exoPlayer.prepare()
         exoPlayer.play()
@@ -264,15 +251,15 @@ class ExoStreamPlayer(
     }
 
     override fun addExternalSubtitleTracks(tracks: List<ExternalSubtitle>) {
-        val unique = (currentSubtitles + tracks)
+        val unique = (itemState.subtitles + tracks)
             .distinctBy { it.id }
-        if (unique.size == currentSubtitles.size) return
-        currentSubtitles = unique
+        if (unique.size == itemState.subtitles.size) return
+        itemState.subtitles = unique
         rebuildMediaItemPreservingPlayback()
     }
 
     override fun addLocalSubtitle(track: ExternalSubtitle) {
-        currentPreferredSubtitleLang = LanguageCatalog.LOCAL_SUBTITLES_LANGUAGE
+        itemState.preferredSubtitleLang = LanguageCatalog.LOCAL_SUBTITLES_LANGUAGE
         addExternalSubtitleTracks(
             listOf(
                 track.copy(
@@ -291,8 +278,52 @@ class ExoStreamPlayer(
         playerView?.player = null
         playerView = null
         exoPlayer.removeListener(listener)
+        android.util.Log.d("PlaybackReuse", "Exo released instance=$instanceId generation=$currentGeneration")
         exoPlayer.release()
         mutableRuntimeState.value = PlayerRuntimeState()
+    }
+
+    private fun resetItemState() {
+        val speed = exoPlayer.playbackParameters.speed
+        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
+            .clearOverrides()
+            .setDisabledTrackTypes(emptySet())
+            .build()
+        exoPlayer.setPlaybackSpeed(speed)
+        itemState.reset()
+        mutableRuntimeState.value = PlayerRuntimeState(speed = speed)
+    }
+
+    private fun createListener(generation: Long) = object : androidx.media3.common.Player.Listener {
+        private fun isCurrentLoad() = itemLoadGeneration.isCurrent(generation)
+
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            if (isCurrentLoad()) publishState()
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (isCurrentLoad()) publishState(ended = playbackState == androidx.media3.common.Player.STATE_ENDED)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            if (!isCurrentLoad()) return
+            publishState(error = error.message ?: "Playback failed")
+            playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(classifyPlaybackFailure(error)))
+        }
+
+        override fun onRenderedFirstFrame() {
+            if (!isCurrentLoad() || !firstVisualSignal.tryEmit()) return
+            android.util.Log.d("PlaybackReuse", "Exo first-visual instance=$instanceId generation=$generation item=item-$generation")
+            playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
+        }
+
+        override fun onTracksChanged(tracks: Tracks) {
+            if (isCurrentLoad()) publishState()
+        }
+
+        override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
+            if (isCurrentLoad()) publishState()
+        }
     }
 
     private fun applySubtitleStyleToView() {
@@ -327,11 +358,11 @@ class ExoStreamPlayer(
     }
 
     private fun rebuildMediaItemPreservingPlayback() {
-        val uri = currentUri ?: return
+        val uri = itemState.uri ?: return
         val position = exoPlayer.currentPosition.coerceAtLeast(0L)
         val wasPlaying = exoPlayer.isPlaying || exoPlayer.playWhenReady
         val speed = exoPlayer.playbackParameters.speed
-        exoPlayer.setMediaItem(buildMediaItem(uri, currentSubtitles, currentPreferredSubtitleLang), position)
+        exoPlayer.setMediaItem(buildMediaItem(uri, itemState.subtitles, itemState.preferredSubtitleLang), position)
         exoPlayer.prepare()
         exoPlayer.setPlaybackSpeed(speed)
         if (wasPlaying) {
@@ -466,9 +497,9 @@ class ExoStreamPlayer(
         label: String?,
         language: String?,
     ): ExternalSubtitle? {
-        return currentSubtitles.firstOrNull { subtitle ->
+        return itemState.subtitles.firstOrNull { subtitle ->
             subtitle.id == formatId || subtitle.id == groupId
-        } ?: currentSubtitles.firstOrNull { subtitle ->
+        } ?: itemState.subtitles.firstOrNull { subtitle ->
             subtitle.label != null &&
                 subtitle.label == label &&
                 LanguageCatalog.matches(subtitle.lang, language)
@@ -480,6 +511,8 @@ class ExoStreamPlayer(
         return if (subtitle.source != null) "$base (${subtitle.source})" else base
     }
 }
+
+private val nextInstanceId = java.util.concurrent.atomic.AtomicLong()
 
 internal fun classifyPlaybackFailure(error: Throwable): String {
     val causes = generateSequence(error) { it.cause }.take(12).toList()

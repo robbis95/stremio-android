@@ -6,6 +6,38 @@ import com.stremio.mobile.data.model.EpisodeOption
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.data.model.StreamSourceKind
 import com.stremio.mobile.data.model.toStreamOption
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Job
+
+/** Attempt-scoped discovery result shared by the prefetcher and Play Next transition. */
+internal class TvStreamPrefetchRequest(
+    val attemptId: String,
+    val targetKey: String,
+    val startedAtNanos: Long,
+) {
+    val result: CompletableDeferred<List<StreamOption>?> = CompletableDeferred()
+    var job: Job? = null
+}
+
+internal class TvStreamPrefetchCache {
+    private var request: TvStreamPrefetchRequest? = null
+
+    fun begin(attemptId: String, targetKey: String, startedAtNanos: Long): TvStreamPrefetchRequest {
+        clear()?.let { previous ->
+            previous.job?.cancel()
+            previous.result.cancel()
+        }
+        return TvStreamPrefetchRequest(attemptId, targetKey, startedAtNanos).also { request = it }
+    }
+
+    fun find(attemptId: String, targetKey: String): TvStreamPrefetchRequest? = request?.takeIf {
+        it.attemptId == attemptId && it.targetKey == targetKey
+    }
+
+    fun isCurrent(candidate: TvStreamPrefetchRequest): Boolean = request === candidate
+
+    fun clear(): TvStreamPrefetchRequest? = request.also { request = null }
+}
 
 internal data class TvStreamTarget(
     val contentType: String,

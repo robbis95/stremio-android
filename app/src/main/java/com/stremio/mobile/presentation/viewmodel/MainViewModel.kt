@@ -44,6 +44,8 @@ import com.stremio.mobile.presentation.tv.TvDetailsUiState
 import com.stremio.mobile.presentation.tv.TvEpisodeBrowserUiState
 import com.stremio.mobile.presentation.tv.TvStreamTarget
 import com.stremio.mobile.presentation.tv.TvStreamSelectionUiState
+import com.stremio.mobile.presentation.tv.TvStreamPrefetchCache
+import com.stremio.mobile.presentation.tv.TvStreamPrefetchRequest
 import com.stremio.mobile.presentation.tv.TvPlaybackUiState
 import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
 import com.stremio.mobile.presentation.tv.TvPlaybackStage
@@ -99,6 +101,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -163,6 +166,7 @@ class MainViewModel(
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private var tvStreamsJob: Job? = null
     private var tvNextEpisodeJob: Job? = null
+    private val tvNextEpisodePrefetch = TvStreamPrefetchCache()
     private var tvNextVideoAttemptId: String? = null
     private var tvNextVideo: com.stremio.core.types.resource.Video? = null
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
@@ -1536,6 +1540,7 @@ class MainViewModel(
     }
 
     fun closePlayer() {
+        cancelTvNextEpisodePrefetch("playback-closed")
         playJob?.cancel()
         playJob = null
         nextVideoJob?.cancel()
@@ -2100,6 +2105,7 @@ class MainViewModel(
 
     /** Starts the explicitly activated TV source without entering the mobile autoplay/health path. */
     internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption) {
+        cancelTvNextEpisodePrefetch("attempt-changed")
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
         tvSkipSegmentsJob?.cancel()
@@ -2291,6 +2297,7 @@ class MainViewModel(
                     firstVisualObserved = true,
                     timing = timing,
                 )
+                maybePrefetchTvNextEpisode(attempt, _tvPlayback.value)
                 val actualEngine = current.actualEngine ?: playbackRepository.actualEngine()
                 authRepository.rememberLocalStreamSelection(
                     attempt.target.contentType,
@@ -2321,8 +2328,9 @@ class MainViewModel(
         tvPlaybackMonitorJob = viewModelScope.launch {
             player.runtimeState.collect { runtime ->
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
+                syncTvNextVideo(attempt.attemptId)
                 val current = _tvPlayback.value
-                _tvPlayback.value = current.copy(
+                val updated = current.copy(
                     runtime = runtime,
                     skipSegments = latestTvCorePlayer?.let { playbackRepository.tvSkipSegments(it, runtime.durationMs) }
                         ?: current.skipSegments,
@@ -2345,6 +2353,8 @@ class MainViewModel(
                         automaticEnabled = profileSettings.value?.bingeWatching == true,
                     ),
                 )
+                _tvPlayback.value = updated
+                maybePrefetchTvNextEpisode(attempt, updated)
                 val fallbackNotice = current.requestedEngine != current.actualEngine &&
                     runtime.error == "MPV unavailable; using ExoPlayer."
                 if (runtime.error != null && !fallbackNotice && current.stage != TvPlaybackStage.Error) {
@@ -2375,6 +2385,13 @@ class MainViewModel(
         val video = playbackRepository.getNextVideo()
         tvNextVideoAttemptId = attemptId
         tvNextVideo = video
+        return nextEpisodeState(attemptId, video)
+    }
+
+    private fun nextEpisodeState(
+        attemptId: String,
+        video: com.stremio.core.types.resource.Video?,
+    ): TvNextEpisodeState {
         val info = video?.seriesInfo
         val label = if (info != null && info.season > 0 && info.episode > 0) {
             "S${info.season.toString().padStart(2, '0')}E${info.episode.toString().padStart(2, '0')}"
@@ -2386,6 +2403,96 @@ class MainViewModel(
             title = video?.title?.takeIf(String::isNotBlank),
             automaticEnabled = profileSettings.value?.bingeWatching == true,
         )
+    }
+
+    private fun syncTvNextVideo(attemptId: String) {
+        if (tvNextVideoAttemptId != attemptId) return
+        val latest = playbackRepository.getNextVideo()
+        if (latest?.id == tvNextVideo?.id) return
+        cancelTvNextEpisodePrefetch("next-video-changed")
+        tvNextVideo = latest
+        val current = _tvPlayback.value
+        if (isCurrentTvAttempt(current, attemptId)) {
+            _tvPlayback.value = current.copy(nextEpisode = nextEpisodeState(attemptId, latest))
+        }
+    }
+
+    private fun maybePrefetchTvNextEpisode(attempt: TvPlaybackAttempt, state: TvPlaybackUiState) {
+        if (!isCurrentTvAttempt(state, attempt.attemptId) || !state.firstVisualObserved) return
+        if (tvNextVideoAttemptId != attempt.attemptId) return
+        val video = tvNextVideo ?: return
+        if (video.id.isBlank() || state.nextEpisode.videoId != video.id) return
+        val durationMs = state.runtime.durationMs
+        if (durationMs <= 0L) return
+        val leadWindowMs = maxOf(120_000L, profileSettings.value?.nextVideoNotificationDuration ?: 0L)
+        if (durationMs - state.runtime.positionMs !in 0L..leadWindowMs) return
+
+        val target = nextEpisodeTarget(attempt.target, video)
+        if (tvNextEpisodePrefetch.find(attempt.attemptId, target.semanticTargetKey) != null) return
+        tvNextEpisodePrefetch.clear()?.let { stale ->
+            cancelTvNextEpisodePrefetchRequest(stale, "stale")
+        }
+        val request = tvNextEpisodePrefetch.begin(
+            attemptId = attempt.attemptId,
+            targetKey = target.semanticTargetKey,
+            startedAtNanos = SystemClock.elapsedRealtimeNanos(),
+        )
+        logTvPrefetch("started", target, attempt.attemptId)
+        request.job = viewModelScope.launch {
+            try {
+                val finalEmission = catalogRepository.getMetaDetailsFlow(
+                    type = target.contentType,
+                    id = target.contentId,
+                    videoId = target.videoId,
+                    guessStreamPath = target.guessStreamPath,
+                ).mapNotNull { details ->
+                    if (!tvStreamTargetMatches(details, target)) null else mapTvStreamEmission(details)
+                }.first { emission -> !emission.isLoading }
+                if (!tvNextEpisodePrefetch.isCurrent(request) ||
+                    !isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId) ||
+                    tvNextVideoAttemptId != attempt.attemptId || tvNextVideo?.id != target.videoId
+                ) {
+                    cancelTvNextEpisodePrefetchRequest(request, "stale")
+                    return@launch
+                }
+                if (request.result.complete(finalEmission.options.takeIf { it.isNotEmpty() })) {
+                    logTvPrefetchReady(target, attempt.attemptId, finalEmission.options.size, request.startedAtNanos)
+                }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                request.result.complete(null)
+                logTvPrefetch("miss/fallback", target, attempt.attemptId)
+            }
+        }
+    }
+
+    private fun cancelTvNextEpisodePrefetch(reason: String) {
+        tvNextEpisodePrefetch.clear()?.let { request ->
+            cancelTvNextEpisodePrefetchRequest(request, reason)
+        }
+    }
+
+    private fun cancelTvNextEpisodePrefetchRequest(request: TvStreamPrefetchRequest, reason: String) {
+        val wasActive = !request.result.isCompleted || request.job?.isActive == true
+        request.job?.cancel()
+        request.result.cancel()
+        if (BuildConfig.DEBUG && wasActive) {
+            Log.d("TvStreamPrefetch", "cancelled/stale attempt=${request.attemptId} reason=$reason")
+        }
+    }
+
+    private fun logTvPrefetch(event: String, target: TvStreamTarget, attemptId: String) {
+        if (BuildConfig.DEBUG) {
+            Log.d("TvStreamPrefetch", "$event attempt=$attemptId target=${target.semanticTargetKey}")
+        }
+    }
+
+    private fun logTvPrefetchReady(target: TvStreamTarget, attemptId: String, streamCount: Int, startedAtNanos: Long) {
+        if (BuildConfig.DEBUG) {
+            val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedAtNanos) / 1_000_000L
+            Log.d("TvStreamPrefetch", "ready attempt=$attemptId target=${target.semanticTargetKey} streams=$streamCount elapsedMs=$elapsedMs")
+        }
     }
 
     internal fun dismissTvNextEpisode(attemptId: String) {
@@ -2412,14 +2519,29 @@ class MainViewModel(
         _tvPlayback.value = current.copy(nextEpisode = transition)
         tvNextEpisodeJob?.cancel()
         tvNextEpisodeJob = viewModelScope.launch {
-            openTvStreams(target)
-            val resolved = withTimeoutOrNull(30_000L) {
-                _tvStreamSelection.first { selection ->
-                    selection.target?.semanticTargetKey == target.semanticTargetKey && !selection.isLoading
+            val prefetched = tvNextEpisodePrefetch.find(attemptId, target.semanticTargetKey)
+            val resolvedOptions = if (prefetched != null) {
+                logTvPrefetch("reused on transition", target, attemptId)
+                withTimeoutOrNull(30_000L) { prefetched.result.await() }
+            } else null
+            if (prefetched != null && resolvedOptions == null && tvNextEpisodePrefetch.isCurrent(prefetched)) {
+                cancelTvNextEpisodePrefetch("prefetch-timeout")
+            }
+            if (resolvedOptions.isNullOrEmpty()) {
+                logTvPrefetch("miss/fallback", target, attemptId)
+                openTvStreams(target)
+            }
+            val resolved = if (!resolvedOptions.isNullOrEmpty()) {
+                resolvedOptions
+            } else {
+                withTimeoutOrNull(30_000L) {
+                    _tvStreamSelection.first { selection ->
+                        selection.target?.semanticTargetKey == target.semanticTargetKey && !selection.isLoading
+                    }.options
                 }
             }
             if (!isCurrentTvAttempt(_tvPlayback.value, attemptId)) return@launch
-            if (resolved == null || resolved.options.isEmpty()) {
+            if (resolved.isNullOrEmpty()) {
                 val latest = _tvPlayback.value
                 if (isCurrentTvAttempt(latest, attemptId)) {
                     _tvPlayback.value = latest.copy(nextEpisode = latest.nextEpisode.copy(
@@ -2430,7 +2552,7 @@ class MainViewModel(
                 return@launch
             }
             val previousOption = current.option
-            val option = preferredNextEpisodeOption(resolved.visibleOptions.ifEmpty { resolved.options }, previousOption)
+            val option = preferredNextEpisodeOption(resolved, previousOption)
             if (option == null) {
                 val latest = _tvPlayback.value
                 _tvPlayback.value = latest.copy(nextEpisode = latest.nextEpisode.copy(
@@ -2488,6 +2610,7 @@ class MainViewModel(
     }
 
     internal fun closeTvPlayback() {
+        cancelTvNextEpisodePrefetch("playback-closed")
         val state = _tvPlayback.value
         state.attempt?.let { attempt ->
             reportTvFinalProgress(state)

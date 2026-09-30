@@ -17,10 +17,49 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class TvStreamSelectionTest {
+    @Test fun `completed prefetch is an immediate cache hit for its attempt and exact target`() = runBlocking {
+        val cache = TvStreamPrefetchCache()
+        val request = cache.begin("attempt-1", "series:show:episode-2", 10L)
+        request.result.complete(listOf(option("prefetched")))
+
+        val hit = cache.find("attempt-1", "series:show:episode-2")
+        assertSame(request, hit)
+        assertEquals("prefetched", hit!!.result.await()!!.single().semanticKey)
+        assertNull(cache.find("attempt-1", "series:show:episode-3"))
+    }
+
+    @Test fun `transition can reuse an in progress prefetch without creating another request`() = runBlocking {
+        val cache = TvStreamPrefetchCache()
+        val request = cache.begin("attempt-1", "series:show:episode-2", 10L)
+
+        val reused = cache.find("attempt-1", "series:show:episode-2")
+        assertSame(request, reused)
+        assertFalse(reused!!.result.isCompleted)
+        request.result.complete(listOf(option("late-result")))
+        assertEquals("late-result", reused.result.await()!!.single().semanticKey)
+    }
+
+    @Test fun `cache miss leaves transition to live discovery fallback`() {
+        val cache = TvStreamPrefetchCache()
+        assertNull(cache.find("attempt-1", "series:show:episode-2"))
+    }
+
+    @Test fun `prefetch cache rejects stale attempt and invalidation`() {
+        val cache = TvStreamPrefetchCache()
+        val stale = cache.begin("attempt-1", "series:show:episode-2", 10L)
+        cache.begin("attempt-2", "series:show:episode-2", 20L)
+
+        assertFalse(cache.isCurrent(stale))
+        assertNull(cache.find("attempt-1", "series:show:episode-2"))
+        assertEquals("attempt-2", cache.find("attempt-2", "series:show:episode-2")!!.attemptId)
+    }
+
     @Test fun `target keys use exact video identity and are stable`() {
         val item = item()
         val a = TvStreamTarget.episode(item, episode("s2e7"))!!

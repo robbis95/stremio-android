@@ -2,10 +2,31 @@ package com.stremio.mobile.presentation.tv
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class TvPlaybackLabStateTest {
+    @Test
+    fun prefetchLabCoversHitReuseFallbackAndStaleAttemptRejection() {
+        val cache = TvStreamPrefetchCache()
+        val ready = cache.begin("attempt-1", "series:show:episode-7", 10L)
+        ready.result.complete(emptyList())
+        assertSame(ready, cache.find("attempt-1", "series:show:episode-7"))
+        assertTrue(ready.result.isCompleted)
+
+        val inProgress = cache.begin("attempt-2", "series:show:episode-8", 20L)
+        assertSame(inProgress, cache.find("attempt-2", "series:show:episode-8"))
+        assertFalse(inProgress.result.isCompleted)
+
+        assertNull(cache.find("attempt-2", "series:show:episode-9")) // Live discovery fallback.
+        val replacement = cache.begin("attempt-3", "series:show:episode-8", 30L)
+        assertFalse(cache.isCurrent(inProgress))
+        assertNull(cache.find("attempt-2", "series:show:episode-8"))
+        assertSame(replacement, cache.find("attempt-3", "series:show:episode-8"))
+    }
+
     @Test
     fun presetsMapToProductionPlayerStagesAndRuntime() {
         val starting = labState(SimPreset.Starting, 10_000L, 600_000L, 30_000L)

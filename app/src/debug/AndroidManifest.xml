@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:name=".PlaybackLabApplication"
+        android:usesCleartextTraffic="true"
+        tools:replace="android:name,android:usesCleartextTraffic">
+        <activity
+            android:name=".presentation.tv.TvPlaybackLabActivity"
+            android:exported="true"
+            android:label="TV Playback Lab"
+            android:theme="@style/Theme.StremioTv" />
+    </application>
+</manifest>

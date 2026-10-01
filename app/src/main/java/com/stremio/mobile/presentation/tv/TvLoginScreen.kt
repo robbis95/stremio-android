@@ -67,6 +67,7 @@ internal fun TvLoginScreen(
     linkState: TvAccountLinkUiState,
     onLogin: (String, String) -> Unit,
     onRequestNewLink: () -> Unit,
+    onRetryLinkCheck: () -> Unit,
 ) {
     var showEmailLogin by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
@@ -153,6 +154,7 @@ internal fun TvLoginScreen(
                     val status = when {
                         linkState.isLoading -> "Creating a secure link…"
                         linkState.isConnecting -> "Link approved. Signing in…"
+                        linkState.linkRefreshed -> "Login code refreshed"
                         linkState.isChecking -> "Waiting for approval on your phone…"
                         linkState.error != null -> linkState.error
                         linkState.link != null -> "Use the code above to link your account."
@@ -161,6 +163,15 @@ internal fun TvLoginScreen(
                     Text(status, style = MaterialTheme.typography.bodyMedium, color = if (linkState.error != null) TvColors.error else TvColors.secondaryText)
                     Spacer(Modifier.height(20.dp))
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (linkState.link != null && linkState.error != null) {
+                            OutlinedButton(
+                                onClick = onRetryLinkCheck,
+                                enabled = !linkState.isLoading && !linkState.isConnecting,
+                                shape = OutlinedButtonDefaults.shape(shape = RoundedCornerShape(TvDimens.controlRadius)),
+                            ) {
+                                Text("Retry")
+                            }
+                        }
                         Button(
                             onClick = onRequestNewLink,
                             enabled = !linkState.isLoading && !linkState.isConnecting,
@@ -237,6 +248,6 @@ private fun createQrBitmap(value: String): Bitmap? = runCatching {
 @Composable
 private fun TvLoginScreenPreview() {
     TvTheme {
-        TvLoginScreen(AccountUiState(), TvAccountLinkUiState(isLoading = true), { _, _ -> }, {})
+        TvLoginScreen(AccountUiState(), TvAccountLinkUiState(isLoading = true), { _, _ -> }, {}, {})
     }
 }

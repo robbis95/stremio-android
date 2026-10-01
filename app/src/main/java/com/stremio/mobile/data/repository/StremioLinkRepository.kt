@@ -1,5 +1,7 @@
 package com.stremio.mobile.data.repository
 
+import android.util.Log
+import com.stremio.mobile.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -13,15 +15,21 @@ data class StremioAccountLink(
     val qrcode: String,
 )
 
+internal interface StremioAccountLinkDataSource {
+    suspend fun createLink(): StremioAccountLink
+    suspend fun readLink(code: String): StremioLinkReadResult
+}
+
 sealed interface StremioLinkReadResult {
     data object Pending : StremioLinkReadResult
     data class Authorized(val authKey: String) : StremioLinkReadResult
-    data class ExpiredOrError(val message: String) : StremioLinkReadResult
+    data class ApiError(val code: Int?, val message: String) : StremioLinkReadResult
+    data class TransportError(val message: String) : StremioLinkReadResult
 }
 
-class StremioLinkRepository {
-    suspend fun createLink(): StremioAccountLink = withContext(Dispatchers.IO) {
-        val result = request("/create?type=Create")
+class StremioLinkRepository : StremioAccountLinkDataSource {
+    override suspend fun createLink(): StremioAccountLink = withContext(Dispatchers.IO) {
+        val result = request("/create?type=Create", endpoint = Endpoint.Create).json
         val payload = result.optJSONObject("result")
             ?: throw StremioLinkException("Stremio returned an invalid link response")
         val code = payload.optString("code").trim()
@@ -33,23 +41,35 @@ class StremioLinkRepository {
         StremioAccountLink(code = code, link = link, qrcode = qrcode)
     }
 
-    suspend fun readLink(code: String): StremioLinkReadResult = withContext(Dispatchers.IO) {
+    override suspend fun readLink(code: String): StremioLinkReadResult = withContext(Dispatchers.IO) {
         try {
             val encodedCode = URLEncoder.encode(code, Charsets.UTF_8.name())
-            val response = request("/read?type=Read&code=$encodedCode")
-            val result = response.optJSONObject("result")
+            val response = request("/read?type=Read&code=$encodedCode", endpoint = Endpoint.Read)
+            val result = response.json.optJSONObject("result")
             val authKey = result?.optString("authKey")?.trim().orEmpty()
-            if (authKey.isNotEmpty()) StremioLinkReadResult.Authorized(authKey)
-            else StremioLinkReadResult.ExpiredOrError("Stremio returned an invalid authorization response")
+            logReadResponse(
+                status = response.status,
+                hasResult = result != null,
+                hasAuthKey = authKey.isNotEmpty(),
+                apiCode = null,
+                message = null,
+                requestedCode = code,
+                authKey = authKey,
+            )
+            classifyLinkReadResponse(authKey = authKey, apiCode = null)
         } catch (error: StremioLinkApiException) {
-            if (error.apiCode == PENDING_API_CODE) StremioLinkReadResult.Pending
-            else StremioLinkReadResult.ExpiredOrError(error.message ?: "Unable to check the link")
+            logReadResponse(error.status, error.hasResult, error.authKey != null, error.apiCode, error.message, code, error.authKey)
+            classifyLinkReadApiError(
+                code = error.apiCode,
+                message = error.message ?: "Unable to check the link",
+            )
         } catch (error: StremioLinkException) {
-            StremioLinkReadResult.ExpiredOrError(error.message ?: "Unable to check the link")
+            logReadResponse(error.status, error.hasResult, error.authKey != null, null, error.message, code, error.authKey)
+            StremioLinkReadResult.TransportError(error.message ?: "Unable to check the link")
         }
     }
 
-    private fun request(path: String): JSONObject {
+    private fun request(path: String, endpoint: Endpoint): LinkHttpResponse {
         val connection = (URL("$BASE_URL$path").openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
@@ -61,21 +81,25 @@ class StremioLinkRepository {
             val body = (if (status in 200..299) connection.inputStream else connection.errorStream)
                 ?.bufferedReader(Charsets.UTF_8)
                 ?.use { it.readText() }
-                ?: throw StremioLinkException("Stremio link service returned no response")
+                ?: throw StremioLinkException("Stremio link service returned no response", status)
             val json = runCatching { JSONObject(body) }
-                .getOrElse { throw StremioLinkException("Stremio link service returned an invalid response") }
+                .getOrElse { throw StremioLinkException("Stremio link service returned an invalid response", status) }
+            if (endpoint == Endpoint.Create) logCreateResponse(status, json)
             val errorValue = json.opt("error")
             val error = json.optJSONObject("error")
             val hasApiError = errorValue != null && errorValue != JSONObject.NULL && errorValue != false
             if (status !in 200..299 || hasApiError) {
-                val code = error?.optInt("code", json.optInt("code", -1)) ?: json.optInt("code", -1)
+                val result = json.optJSONObject("result")
+                val authKey = result?.optString("authKey")?.takeIf { it.isNotBlank() }
+                val code = (error?.takeIf { it.has("code") }?.opt("code") ?: json.opt("code"))
+                    ?.let { value -> value.toString().toIntOrNull() }
                 val message = error?.optString("message")?.takeIf { it.isNotBlank() }
                     ?: (errorValue as? String)?.takeIf { it.isNotBlank() }
                     ?: json.optString("message").takeIf { it.isNotBlank() }
                     ?: "Stremio link request failed"
-                throw StremioLinkApiException(code, message)
+                throw StremioLinkApiException(status, json.has("result"), authKey, code, message)
             }
-            return json
+            return LinkHttpResponse(status, json)
         } catch (error: StremioLinkException) {
             throw error
         } catch (_: Exception) {
@@ -85,11 +109,73 @@ class StremioLinkRepository {
         }
     }
 
+    private fun logCreateResponse(status: Int, json: JSONObject) {
+        if (!BuildConfig.DEBUG) return
+        val result = json.optJSONObject("result")
+        Log.d(TAG, "StremioLink create status=$status topKeys=${json.keys().asSequence().toList()} resultKeys=${result?.keys()?.asSequence()?.toList() ?: emptyList<String>()}")
+        listOfNotNull(json, result).forEach { objectWithMetadata ->
+            objectWithMetadata.keys().forEach { key ->
+                if (key.lowercase() in LIFETIME_FIELDS) {
+                    val value = objectWithMetadata.opt(key)
+                    if (value is String || value is Number || value is Boolean) {
+                        Log.d(TAG, "StremioLink create metadata $key=${sanitize(value.toString())}")
+                    }
+                }
+            }
+        }
+    }
+
+    private fun logReadResponse(
+        status: Int?, hasResult: Boolean, hasAuthKey: Boolean, apiCode: Int?, message: String?,
+        requestedCode: String, authKey: String?,
+    ) {
+        if (!BuildConfig.DEBUG) return
+        val safeMessage = message?.let { sanitize(it, requestedCode, authKey) }
+        Log.d(TAG, "StremioLink read status=${status ?: "none"} hasResult=$hasResult hasAuthKey=$hasAuthKey apiCode=${apiCode ?: "none"} message=${safeMessage?.let { "\"$it\"" } ?: "none"}")
+    }
+
+    private fun sanitize(value: String, requestedCode: String? = null, authKey: String? = null): String = value
+        .replace(Regex("https?://\\S+", RegexOption.IGNORE_CASE), "[redacted-url]")
+        .let { safe -> requestedCode?.takeIf(String::isNotBlank)?.let { safe.replace(it, "[redacted-code]", ignoreCase = true) } ?: safe }
+        .let { safe -> authKey?.takeIf(String::isNotBlank)?.let { safe.replace(it, "[redacted-auth-key]") } ?: safe }
+        .replace(Regex("(?i)bearer\\s+[^\\s,;]+"), "Bearer [redacted]")
+        .replace(Regex("\\b[A-Za-z0-9_-]{20,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\b"), "[redacted-token]")
+        .replace(Regex("(?i)(authkey|token|password|credential)\\s*[:=]\\s*[^\\s,;]+"), "${'$'}1=[redacted]")
+        .take(300)
+
+    private enum class Endpoint { Create, Read }
+    private data class LinkHttpResponse(val status: Int, val json: JSONObject)
+
     private companion object {
         const val BASE_URL = "https://link.stremio.com/api/v2"
-        const val PENDING_API_CODE = 101
+        const val TAG = "StremioLink"
+        val LIFETIME_FIELDS = setOf("expires", "expiresat", "expiresin", "ttl", "createdat")
     }
 }
 
-private open class StremioLinkException(message: String) : Exception(message)
-private class StremioLinkApiException(val apiCode: Int, message: String) : StremioLinkException(message)
+internal fun classifyLinkReadResponse(
+    authKey: String = "",
+    apiCode: Int?,
+    message: String = "Unable to check the link",
+): StremioLinkReadResult = when {
+    !authKey.isBlank() -> StremioLinkReadResult.Authorized(authKey)
+    apiCode != null -> classifyLinkReadApiError(apiCode, message)
+    else -> StremioLinkReadResult.TransportError(message)
+}
+
+internal fun classifyLinkReadApiError(code: Int?, message: String): StremioLinkReadResult =
+    if (code == 101) StremioLinkReadResult.Pending else StremioLinkReadResult.ApiError(code, message)
+
+private open class StremioLinkException(
+    message: String,
+    val status: Int? = null,
+    val hasResult: Boolean = false,
+    val authKey: String? = null,
+) : Exception(message)
+private class StremioLinkApiException(
+    status: Int,
+    hasResult: Boolean,
+    authKey: String?,
+    val apiCode: Int?,
+    message: String,
+) : StremioLinkException(message, status, hasResult, authKey)

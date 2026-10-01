@@ -157,6 +157,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                     linkState = tvLinkState,
                     onLogin = viewModel::login,
                     onRequestNewLink = viewModel::requestNewTvAccountLink,
+                    onRetryLinkCheck = viewModel::retryTvAccountLinkCheck,
                 )
                 else -> {
                     Column(Modifier.fillMaxSize()) {

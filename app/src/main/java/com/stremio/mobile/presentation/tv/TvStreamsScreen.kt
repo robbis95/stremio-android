@@ -78,6 +78,38 @@ internal fun TvStreamsScreen(
     val providers = state.providers.filter { it.readyStreamCount > 0 }
     val showFilter = providers.size > 1
     val filterIds = listOf<String?>(null) + providers.map { it.identity }
+    val debugActions = if (BuildConfig.DEBUG) {
+        listOf(
+            TvStreamsDebugAction(validationRequester, "Use bundled validation media (A → B → C)", onEnableValidationMedia),
+            TvStreamsDebugAction(incompatibleRequester, "DEBUG: force hardware-decoding recreation on B", onArmIncompatibleValidation),
+            TvStreamsDebugAction(holdRequester, "DEBUG: pause next fixture after first visual", onArmHoldAfterFirstVisual),
+            TvStreamsDebugAction(mpvRequester, "DEBUG: request MPV for fixture B", onArmMpvRequestedEngine),
+        )
+    } else {
+        emptyList()
+    }
+    val focusPolicy = tvStreamsFocusPolicy(
+        debugActionsRendered = debugActions.isNotEmpty(),
+        providerFilterRendered = showFilter,
+        streamRendered = visible.isNotEmpty(),
+    )
+    val selectedProviderRequester = if (showFilter) {
+        providerRequesters.getOrPut(state.selectedProvider ?: "all") { FocusRequester() }
+    } else {
+        null
+    }
+    val firstStreamRequester = visible.firstOrNull()?.let { option ->
+        streamRequesters.getOrPut(option.semanticKey) { FocusRequester() }
+    }
+    val lastDebugRequester = debugActions.lastOrNull()?.requester
+
+    fun requesterFor(target: TvStreamsFocusTarget): FocusRequester = when (target) {
+        TvStreamsFocusTarget.Back -> backRequester
+        TvStreamsFocusTarget.FirstDebugAction -> debugActions.firstOrNull()?.requester ?: backRequester
+        TvStreamsFocusTarget.LastDebugAction -> lastDebugRequester ?: backRequester
+        TvStreamsFocusTarget.ProviderFilter -> selectedProviderRequester ?: backRequester
+        TvStreamsFocusTarget.FirstStream -> firstStreamRequester ?: backRequester
+    }
 
     LaunchedEffect(targetKey, visible.map { it.semanticKey }) {
         val savedKey = saved.semanticKey
@@ -130,12 +162,7 @@ internal fun TvStreamsScreen(
             OutlinedButton(
                 onClick = onBack,
                 modifier = Modifier.focusRequester(backRequester)
-                    .onKeyEvent { event ->
-                        if (BuildConfig.DEBUG && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                            validationRequester.requestFocus()
-                            true
-                        } else false
-                    },
+                    .focusProperties { down = requesterFor(focusPolicy.backDown) },
             ) { Text("Back") }
             Column(Modifier.weight(1f).padding(start = 18.dp)) {
                 Text("Choose Source", style = MaterialTheme.typography.headlineSmall, color = TvColors.primaryText)
@@ -153,34 +180,17 @@ internal fun TvStreamsScreen(
             }
         }
 
-        if (BuildConfig.DEBUG) {
+        debugActions.forEachIndexed { index, action ->
+            val upRequester = debugActions.getOrNull(index - 1)?.requester ?: backRequester
+            val downRequester = debugActions.getOrNull(index + 1)?.requester
+                ?: requesterFor(focusPolicy.lastDebugActionDown)
             OutlinedButton(
-                onClick = onEnableValidationMedia,
-                modifier = Modifier.focusRequester(validationRequester).padding(top = 8.dp)
-                    .focusProperties { up = backRequester; down = incompatibleRequester },
+                onClick = action.onClick,
+                modifier = Modifier.focusRequester(action.requester)
+                    .padding(top = if (index == 0) 8.dp else 4.dp)
+                    .focusProperties { up = upRequester; down = downRequester },
             ) {
-                Text("Use bundled validation media (A → B → C)")
-            }
-            OutlinedButton(
-                onClick = onArmIncompatibleValidation,
-                modifier = Modifier.focusRequester(incompatibleRequester).padding(top = 4.dp)
-                    .focusProperties { up = validationRequester; down = holdRequester },
-            ) {
-                Text("DEBUG: force hardware-decoding recreation on B")
-            }
-            OutlinedButton(
-                onClick = onArmHoldAfterFirstVisual,
-                modifier = Modifier.focusRequester(holdRequester).padding(top = 4.dp)
-                    .focusProperties { up = incompatibleRequester; down = mpvRequester },
-            ) {
-                Text("DEBUG: pause next fixture after first visual")
-            }
-            OutlinedButton(
-                onClick = onArmMpvRequestedEngine,
-                modifier = Modifier.focusRequester(mpvRequester).padding(top = 4.dp)
-                    .focusProperties { up = holdRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
-            ) {
-                Text("DEBUG: request MPV for fixture B")
+                Text(action.label)
             }
         }
 
@@ -190,9 +200,11 @@ internal fun TvStreamsScreen(
                 filterIds.forEachIndexed { index, id ->
                     val label = if (id == null) "All" else providers.firstOrNull { it.identity == id }?.title ?: "Addon"
                     val requester = providerRequesters.getOrPut(id ?: "all") { FocusRequester() }
+                    val upRequester = if (index == 0) requesterFor(focusPolicy.providerFilterUp)
+                        else providerRequesters.getOrPut(filterIds[index - 1] ?: "all") { FocusRequester() }
                     val active = state.selectedProvider == id
                     val buttonModifier = Modifier.focusRequester(requester).focusProperties {
-                        up = if (index == 0) incompatibleRequester else providerRequesters.getOrPut(filterIds[index - 1] ?: "all") { FocusRequester() }
+                        up = upRequester
                         left = if (index == 0) backRequester else providerRequesters.getOrPut(filterIds[index - 1] ?: "all") { FocusRequester() }
                         right = providerRequesters.getOrPut(filterIds.getOrNull(index + 1) ?: id ?: "all") { FocusRequester() }
                         down = streamRequesters[focusedKey] ?: backRequester
@@ -227,7 +239,7 @@ internal fun TvStreamsScreen(
                 itemsIndexed(visible, key = { _, option -> option.semanticKey }) { index, option ->
                     val requester = streamRequesters.getOrPut(option.semanticKey) { FocusRequester() }
                     val upRequester = if (index > 0) streamRequesters.getOrPut(visible[index - 1].semanticKey) { FocusRequester() }
-                        else if (showFilter) providerRequesters.getOrPut(state.selectedProvider ?: "all") { FocusRequester() } else backRequester
+                        else requesterFor(focusPolicy.firstStreamUp)
                     val downRequester = visible.getOrNull(index + 1)?.let {
                         streamRequesters.getOrPut(it.semanticKey) { FocusRequester() }
                     } ?: requester
@@ -293,6 +305,12 @@ internal fun TvStreamsScreen(
         }
     }
 }
+
+private data class TvStreamsDebugAction(
+    val requester: FocusRequester,
+    val label: String,
+    val onClick: () -> Unit,
+)
 
 @Composable
 private fun TvSourceRow(option: StreamOption, selected: Boolean, modifier: Modifier = Modifier) {

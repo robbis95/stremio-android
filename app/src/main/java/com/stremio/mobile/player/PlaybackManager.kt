@@ -133,6 +133,7 @@ class PlaybackManager(
     fun release() {
         (player as? ReusableExoPlayer)?.let {
             playbackReuseLog("release attempt=${listenerOwnerAttemptId ?: "unknown"} instance=${it.instanceId} generation=${it.itemGeneration}")
+            playbackReuseLog("listener-owner cleared attempt=${listenerOwnerAttemptId ?: "unknown"} instance=${it.instanceId} generation=${it.itemGeneration}")
         }
         player?.setPlaybackEventListener(null)
         player?.release()

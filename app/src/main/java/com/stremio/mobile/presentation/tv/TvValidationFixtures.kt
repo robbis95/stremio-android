@@ -28,12 +28,13 @@ class TvValidationFixtures(
 
     data class Fixture(val id: String, val rawResourceName: String, val label: String)
 
-    fun enableForCurrentSequence(): Boolean {
+    internal fun enableForCurrentSequence(target: TvStreamTarget): Boolean {
         if (!debugBuild) return false
         enabled = true
         incompatibleHardwareModeArmed = false
         incompatibleHardwareModeActive = false
-        sequence.begin()
+        sequence.begin(target)
+        if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "sequence-start target=${target.semanticTargetKey}")
         return true
     }
 
@@ -50,6 +51,15 @@ class TvValidationFixtures(
         incompatibleHardwareModeActive = false
         return true
     }
+
+    fun armHoldAfterFirstVisual(): Boolean {
+        if (!isEnabled() || !sequence.armHoldAfterFirstVisual()) return false
+        if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "hold-after-first-visual armed fixture=B")
+        return true
+    }
+
+    internal fun consumeHoldAfterFirstVisual(target: TvStreamTarget): Boolean =
+        debugBuild && isEnabled() && sequence.consumeHoldAfterFirstVisual(target)
 
     /** Applied only to fixture B/C loads while explicitly armed in DEBUG validation mode. */
     internal fun constructionSettingsFor(
@@ -70,6 +80,7 @@ class TvValidationFixtures(
     internal fun optionsFor(target: TvStreamTarget): List<StreamOption>? {
         if (!isEnabled()) return null
         val fixture = sequence.fixtureFor(target) ?: return null
+        if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "fixture=${fixture.id} target=${target.semanticTargetKey}")
         val request = ResourceRequest(
             base = "debug-tv-fixture",
             path = ResourcePath("stream", target.contentType, target.videoId ?: target.contentId),
@@ -162,11 +173,34 @@ internal class TvFixtureSequence(
         if (!debugBuild) return
         active = true
         assignments.clear()
+        holdAfterFirstVisualArmed = false
+    }
+
+    fun begin(target: TvStreamTarget) {
+        begin()
+        if (!debugBuild || !active) return
+        assignments[target.semanticTargetKey] = fixtures.first()
     }
 
     fun end() {
         active = false
         assignments.clear()
+        holdAfterFirstVisualArmed = false
+    }
+
+    private var holdAfterFirstVisualArmed = false
+
+    fun armHoldAfterFirstVisual(): Boolean {
+        if (!debugBuild || !active) return false
+        holdAfterFirstVisualArmed = true
+        return true
+    }
+
+    fun consumeHoldAfterFirstVisual(target: TvStreamTarget): Boolean {
+        if (!debugBuild || !active || !holdAfterFirstVisualArmed) return false
+        if (fixtureForKnownTarget(target)?.id != "B") return false
+        holdAfterFirstVisualArmed = false
+        return true
     }
 
     fun fixtureFor(target: TvStreamTarget): TvValidationFixtures.Fixture? {

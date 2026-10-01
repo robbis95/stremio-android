@@ -23,6 +23,42 @@ class TvValidationFixturesTest {
         assertNull(sequence.fixtureFor(target("five")))
     }
 
+    @Test fun `explicit restart assigns A to selected target and clears prior sequence`() {
+        val sequence = TvFixtureSequence(fixtures, debugBuild = true)
+        val original = target("original")
+        sequence.begin(original)
+        assertEquals("A", sequence.fixtureFor(original)?.id)
+        val b = target("b", TvValidationFixtures.mediaId("B"))
+        assertEquals("B", sequence.fixtureFor(b)?.id)
+        assertEquals("C", sequence.fixtureFor(target("c", TvValidationFixtures.mediaId("C")))?.id)
+
+        val selectedNormalEpisode = target("selected-again")
+        sequence.begin(selectedNormalEpisode)
+        assertEquals("A", sequence.fixtureFor(selectedNormalEpisode)?.id)
+        assertNull(sequence.fixtureFor(target("unrelated-after-restart")))
+    }
+
+    @Test fun `hold after first visual is debug-only explicitly armed one-shot for fixture B`() {
+        val sequence = TvFixtureSequence(fixtures, debugBuild = true)
+        val a = target("a")
+        sequence.begin(a)
+        val b = target("b", TvValidationFixtures.mediaId("B"))
+        val c = target("c", TvValidationFixtures.mediaId("C"))
+        sequence.fixtureFor(b)
+        sequence.fixtureFor(c)
+
+        assertFalse(sequence.consumeHoldAfterFirstVisual(b))
+        assertTrue(sequence.armHoldAfterFirstVisual())
+        assertFalse(sequence.consumeHoldAfterFirstVisual(a))
+        assertTrue(sequence.consumeHoldAfterFirstVisual(b))
+        assertFalse(sequence.consumeHoldAfterFirstVisual(b))
+
+        assertTrue(sequence.armHoldAfterFirstVisual())
+        sequence.begin(a)
+        assertFalse(sequence.consumeHoldAfterFirstVisual(b))
+        assertFalse(TvFixtureSequence(fixtures, debugBuild = false).apply { begin(a) }.armHoldAfterFirstVisual())
+    }
+
     @Test fun `release behavior cannot activate fixture source substitution`() {
         val releaseSequence = TvFixtureSequence(fixtures, debugBuild = false)
         releaseSequence.begin()

@@ -2117,7 +2117,11 @@ class MainViewModel internal constructor(
 
     internal fun enableTvValidationMedia() {
         val target = _tvStreamSelection.value.target ?: return
-        if (tvValidationFixtures?.enableForCurrentSequence() == true) openTvStreams(target)
+        if (tvValidationFixtures?.enableForCurrentSequence(target) == true) openTvStreams(target)
+    }
+
+    internal fun armTvHoldAfterFirstVisual() {
+        tvValidationFixtures?.armHoldAfterFirstVisual()
     }
 
     internal fun armTvIncompatibleConstructionValidation() {
@@ -2367,6 +2371,18 @@ class MainViewModel internal constructor(
                     current.option ?: return,
                 )
                 Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "first-visual", actualEngine, timing, event.signalKind))
+                if (tvValidationFixtures?.consumeHoldAfterFirstVisual(attempt.target) == true) {
+                    val player = playbackRepository.getPlayer()
+                    val reusable = player as? com.stremio.mobile.player.ReusableExoPlayer
+                    player?.pause()
+                    if (BuildConfig.DEBUG) {
+                        Log.i(
+                            "TvValidation",
+                            "hold-after-first-visual attempt=${attempt.attemptId} media=${attempt.target.videoId ?: attempt.target.contentId} " +
+                                "instance=${reusable?.instanceId ?: "none"} generation=${reusable?.itemGeneration ?: "none"}",
+                        )
+                    }
+                }
                 timing.firstVisualSignalNanos?.let { tvEpisodeTransition.firstVisual(attempt.attemptId, it) }
                     ?.let { trace ->
                         logTvEpisodeTransition(trace)

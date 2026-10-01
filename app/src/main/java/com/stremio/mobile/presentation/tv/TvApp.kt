@@ -289,6 +289,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onFocusChanged = { targetKey, memory -> streamFocusMemory[targetKey] = memory },
                             onEnableValidationMedia = viewModel::enableTvValidationMedia,
                             onArmIncompatibleValidation = viewModel::armTvIncompatibleConstructionValidation,
+                            onArmHoldAfterFirstVisual = viewModel::armTvHoldAfterFirstVisual,
                         )
                     }
                     if (route == TvRoute.Player) {

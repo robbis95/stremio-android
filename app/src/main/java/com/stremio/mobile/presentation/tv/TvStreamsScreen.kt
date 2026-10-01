@@ -57,6 +57,7 @@ internal fun TvStreamsScreen(
     onFocusChanged: (String, TvStreamFocusMemory) -> Unit,
     onEnableValidationMedia: () -> Unit = {},
     onArmIncompatibleValidation: () -> Unit = {},
+    onArmHoldAfterFirstVisual: () -> Unit = {},
 ) {
     val target = state.target ?: return
     val targetKey = target.semanticTargetKey
@@ -151,12 +152,20 @@ internal fun TvStreamsScreen(
             ) {
                 Text("Use bundled validation media (A → B → C)")
             }
+            val holdRequester = remember { FocusRequester() }
             OutlinedButton(
                 onClick = onArmIncompatibleValidation,
                 modifier = Modifier.focusRequester(incompatibleRequester).padding(top = 4.dp)
-                    .focusProperties { up = validationRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
+                    .focusProperties { up = validationRequester; down = holdRequester },
             ) {
                 Text("DEBUG: force hardware-decoding recreation on B")
+            }
+            OutlinedButton(
+                onClick = onArmHoldAfterFirstVisual,
+                modifier = Modifier.focusRequester(holdRequester).padding(top = 4.dp)
+                    .focusProperties { up = incompatibleRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
+            ) {
+                Text("DEBUG: pause next fixture after first visual")
             }
         }
 

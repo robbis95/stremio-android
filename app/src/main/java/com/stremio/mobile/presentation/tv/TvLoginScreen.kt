@@ -152,6 +152,7 @@ internal fun TvLoginScreen(
                     )
                     Spacer(Modifier.height(10.dp))
                     val status = when {
+                        linkState.isLoading && linkState.isReplacing -> "Creating a new login code…"
                         linkState.isLoading -> "Creating a secure link…"
                         linkState.isConnecting -> "Link approved. Signing in…"
                         linkState.linkRefreshed -> "Login code refreshed"

@@ -18,6 +18,13 @@ data class StremioAccountLink(
 internal interface StremioAccountLinkDataSource {
     suspend fun createLink(): StremioAccountLink
     suspend fun readLink(code: String): StremioLinkReadResult
+    suspend fun checkLinkValidity(link: String): StremioLinkValidity
+}
+
+sealed interface StremioLinkValidity {
+    data object Active : StremioLinkValidity
+    data object Expired : StremioLinkValidity
+    data class Unknown(val message: String) : StremioLinkValidity
 }
 
 sealed interface StremioLinkReadResult {
@@ -66,6 +73,49 @@ class StremioLinkRepository : StremioAccountLinkDataSource {
         } catch (error: StremioLinkException) {
             logReadResponse(error.status, error.hasResult, error.authKey != null, null, error.message, code, error.authKey)
             StremioLinkReadResult.TransportError(error.message ?: "Unable to check the link")
+        }
+    }
+
+    override suspend fun checkLinkValidity(link: String): StremioLinkValidity = withContext(Dispatchers.IO) {
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (URL(link).openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+                connectTimeout = 10_000
+                readTimeout = 10_000
+                setRequestProperty("Accept", "text/html")
+            }
+            val status = connection.responseCode
+            val locationPresent = !connection.getHeaderField("Location").isNullOrBlank()
+            val html = if (status == HttpURLConnection.HTTP_OK) {
+                connection.inputStream?.bufferedReader(Charsets.UTF_8)?.use { reader ->
+                    val htmlBuilder = StringBuilder(MAX_EXPIRY_HTML_CHARS)
+                    val buffer = CharArray(2_048)
+                    while (htmlBuilder.length < MAX_EXPIRY_HTML_CHARS) {
+                        val count = reader.read(buffer, 0, minOf(buffer.size, MAX_EXPIRY_HTML_CHARS - htmlBuilder.length))
+                        if (count < 0) break
+                        htmlBuilder.append(buffer, 0, count)
+                    }
+                    htmlBuilder.toString()
+                }
+            } else null
+            val validity = classifyLinkValidity(status, locationPresent, html)
+            if (BuildConfig.DEBUG) {
+                val classification = when (validity) {
+                    StremioLinkValidity.Active -> "active"
+                    StremioLinkValidity.Expired -> "expired"
+                    is StremioLinkValidity.Unknown -> "unknown"
+                }
+                Log.d(TAG, "StremioLink validity status=$status classification=$classification")
+            }
+            validity
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            StremioLinkValidity.Unknown("Unable to check this link")
+        } finally {
+            connection?.disconnect()
         }
     }
 
@@ -150,8 +200,32 @@ class StremioLinkRepository : StremioAccountLinkDataSource {
         const val BASE_URL = "https://link.stremio.com/api/v2"
         const val TAG = "StremioLink"
         val LIFETIME_FIELDS = setOf("expires", "expiresat", "expiresin", "ttl", "createdat")
+        const val MAX_EXPIRY_HTML_CHARS = 16_384
     }
 }
+
+/** Expiry comes only from the server-rendered link page; CREATE declares no TTL. */
+internal fun classifyLinkValidity(
+    status: Int,
+    locationPresent: Boolean,
+    html: String?,
+): StremioLinkValidity = when {
+    status in REDIRECT_STATUSES && locationPresent -> StremioLinkValidity.Active
+    status == HttpURLConnection.HTTP_OK && html.isOfficialExpiredLinkPage() -> StremioLinkValidity.Expired
+    else -> StremioLinkValidity.Unknown("Unable to check this link")
+}
+
+private fun String?.isOfficialExpiredLinkPage(): Boolean {
+    if (this == null || !contains("<html", ignoreCase = true) || !contains("stremio", ignoreCase = true)) return false
+    val title = Regex("<title\\b[^>]*>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .find(this)?.groupValues?.getOrNull(1)?.replace(Regex("\\s+"), " ")?.trim()
+    val heading = Regex("<h[1-3]\\b[^>]*>(.*?)</h[1-3]>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
+        .findAll(this).map { it.groupValues[1].replace(Regex("<[^>]+>"), " ").replace(Regex("\\s+"), " ").trim() }
+        .any { it.equals("Code Expired", ignoreCase = true) }
+    return title?.equals("Code Expired - Stremio Link", ignoreCase = true) == true && heading
+}
+
+private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
 
 internal fun classifyLinkReadResponse(
     authKey: String = "",

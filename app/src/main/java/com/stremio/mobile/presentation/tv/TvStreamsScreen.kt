@@ -58,6 +58,7 @@ internal fun TvStreamsScreen(
     onEnableValidationMedia: () -> Unit = {},
     onArmIncompatibleValidation: () -> Unit = {},
     onArmHoldAfterFirstVisual: () -> Unit = {},
+    onArmMpvRequestedEngine: () -> Unit = {},
 ) {
     val target = state.target ?: return
     val targetKey = target.semanticTargetKey
@@ -67,6 +68,8 @@ internal fun TvStreamsScreen(
     val backRequester = remember(targetKey) { FocusRequester() }
     val validationRequester = remember(targetKey) { FocusRequester() }
     val incompatibleRequester = remember(targetKey) { FocusRequester() }
+    val holdRequester = remember { FocusRequester() }
+    val mpvRequester = remember(targetKey) { FocusRequester() }
     val providerRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val streamRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val visible = state.visibleOptions
@@ -158,7 +161,6 @@ internal fun TvStreamsScreen(
             ) {
                 Text("Use bundled validation media (A → B → C)")
             }
-            val holdRequester = remember { FocusRequester() }
             OutlinedButton(
                 onClick = onArmIncompatibleValidation,
                 modifier = Modifier.focusRequester(incompatibleRequester).padding(top = 4.dp)
@@ -169,9 +171,16 @@ internal fun TvStreamsScreen(
             OutlinedButton(
                 onClick = onArmHoldAfterFirstVisual,
                 modifier = Modifier.focusRequester(holdRequester).padding(top = 4.dp)
-                    .focusProperties { up = incompatibleRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
+                    .focusProperties { up = incompatibleRequester; down = mpvRequester },
             ) {
                 Text("DEBUG: pause next fixture after first visual")
+            }
+            OutlinedButton(
+                onClick = onArmMpvRequestedEngine,
+                modifier = Modifier.focusRequester(mpvRequester).padding(top = 4.dp)
+                    .focusProperties { up = holdRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
+            ) {
+                Text("DEBUG: request MPV for fixture B")
             }
         }
 

@@ -2124,6 +2124,10 @@ class MainViewModel internal constructor(
         tvValidationFixtures?.armHoldAfterFirstVisual()
     }
 
+    internal fun armTvMpvRequestedEngineValidation() {
+        tvValidationFixtures?.armMpvRequestedEngine()
+    }
+
     internal fun armTvIncompatibleConstructionValidation() {
         val armed = tvValidationFixtures?.armHardwareDecodingMismatch() == true
         if (BuildConfig.DEBUG && armed) Log.i("TvValidation", "incompatible-transition armed setting=hardwareDecoding media=fixture-B-and-C")
@@ -2159,7 +2163,11 @@ class MainViewModel internal constructor(
             playbackRepository.release()
         }
 
-        val requestedEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
+        val configuredEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
+        val requestedEngine = tvValidationFixtures?.requestedEngineFor(
+            target.videoId ?: target.contentId,
+            configuredEngine,
+        ) ?: configuredEngine
         val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
         tvReusePendingAttemptId = attempt.attemptId.takeIf { heldExoForReuse }

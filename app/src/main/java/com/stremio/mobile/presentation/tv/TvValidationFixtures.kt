@@ -9,6 +9,7 @@ import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.data.model.StreamSourceKind
 import com.stremio.mobile.data.repository.PlayableSourceResolver
+import com.stremio.mobile.player.PlayerEngine
 import com.stremio.core.types.addon.ResourcePath
 import com.stremio.core.types.addon.ResourceRequest
 import com.stremio.core.types.resource.Stream
@@ -24,6 +25,7 @@ class TvValidationFixtures(
     private var enabled = false
     private var incompatibleHardwareModeArmed = false
     private var incompatibleHardwareModeActive = false
+    private val mpvRequestedEngineOverride = TvFixtureMpvEngineOverride(debugBuild)
     private val sequence = TvFixtureSequence(FIXTURES, debugBuild)
 
     data class Fixture(val id: String, val rawResourceName: String, val label: String)
@@ -33,6 +35,7 @@ class TvValidationFixtures(
         enabled = true
         incompatibleHardwareModeArmed = false
         incompatibleHardwareModeActive = false
+        mpvRequestedEngineOverride.reset()
         sequence.begin(target)
         if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "sequence-start target=${target.semanticTargetKey}")
         return true
@@ -42,6 +45,7 @@ class TvValidationFixtures(
         enabled = false
         incompatibleHardwareModeArmed = false
         incompatibleHardwareModeActive = false
+        mpvRequestedEngineOverride.reset()
         sequence.end()
     }
 
@@ -56,6 +60,19 @@ class TvValidationFixtures(
         if (!isEnabled() || !sequence.armHoldAfterFirstVisual()) return false
         if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "hold-after-first-visual armed fixture=B")
         return true
+    }
+
+    fun armMpvRequestedEngine(): Boolean {
+        if (!mpvRequestedEngineOverride.arm(isEnabled())) return false
+        if (BuildConfig.DEBUG) android.util.Log.i("TvValidation", "requested-engine override armed engine=MPV media=fixture-B")
+        return true
+    }
+
+    /** One-shot engine override for explicit DEBUG fixture B; player creation stays in production paths. */
+    internal fun requestedEngineFor(mediaId: String?, configured: PlayerEngine): PlayerEngine {
+        val requested = mpvRequestedEngineOverride.requestedEngineFor(mediaId, configured, isEnabled())
+        if (requested != configured && BuildConfig.DEBUG) android.util.Log.i("TvValidation", "requested-engine override media=$mediaId configured=${configured.name} requested=${requested.name}")
+        return requested
     }
 
     internal fun consumeHoldAfterFirstVisual(target: TvStreamTarget): Boolean =
@@ -161,6 +178,27 @@ internal fun tvFixtureEnabled(debugBuild: Boolean, active: Boolean): Boolean = d
 
 internal fun tvFixtureHardwareOverride(debugBuild: Boolean, active: Boolean, armed: Boolean, mediaId: String?): Boolean =
     debugBuild && active && armed && mediaId in setOf(TvValidationFixtures.mediaId("B"), TvValidationFixtures.mediaId("C"))
+
+/** Stateful, one-shot requested-engine override used only by an active DEBUG fixture sequence. */
+internal class TvFixtureMpvEngineOverride(private val debugBuild: Boolean) {
+    private var armed = false
+
+    fun arm(fixturesActive: Boolean): Boolean {
+        if (!debugBuild || !fixturesActive) return false
+        armed = true
+        return true
+    }
+
+    fun requestedEngineFor(mediaId: String?, configured: PlayerEngine, fixturesActive: Boolean): PlayerEngine {
+        if (!debugBuild || !fixturesActive || !armed || mediaId != TvValidationFixtures.mediaId("B")) return configured
+        armed = false
+        return PlayerEngine.MPV
+    }
+
+    fun reset() {
+        armed = false
+    }
+}
 
 internal class TvFixtureSequence(
     private val fixtures: List<TvValidationFixtures.Fixture>,

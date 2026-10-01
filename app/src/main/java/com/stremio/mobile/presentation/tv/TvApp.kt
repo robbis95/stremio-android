@@ -290,6 +290,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onEnableValidationMedia = viewModel::enableTvValidationMedia,
                             onArmIncompatibleValidation = viewModel::armTvIncompatibleConstructionValidation,
                             onArmHoldAfterFirstVisual = viewModel::armTvHoldAfterFirstVisual,
+                            onArmMpvRequestedEngine = viewModel::armTvMpvRequestedEngineValidation,
                         )
                     }
                     if (route == TvRoute.Player) {

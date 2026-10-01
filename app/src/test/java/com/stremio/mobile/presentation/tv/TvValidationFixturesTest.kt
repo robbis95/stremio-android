@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import com.stremio.core.types.resource.Video
 import com.stremio.core.types.resource.VideoDeepLinks
+import com.stremio.mobile.player.PlayerEngine
 import org.junit.Test
 
 class TvValidationFixturesTest {
@@ -145,6 +146,34 @@ class TvValidationFixturesTest {
         assertFalse(tvFixtureHardwareOverride(debugBuild = true, active = true, armed = true, mediaId = "normal-media"))
         assertTrue(tvFixtureHardwareOverride(debugBuild = true, active = true, armed = true, mediaId = TvValidationFixtures.mediaId("B")))
         assertTrue(tvFixtureHardwareOverride(debugBuild = true, active = true, armed = true, mediaId = TvValidationFixtures.mediaId("C")))
+    }
+
+    @Test fun `MPV request override is inactive until explicitly armed for an active debug sequence`() {
+        val override = TvFixtureMpvEngineOverride(debugBuild = true)
+        assertEquals(PlayerEngine.EXO, override.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+        assertFalse(override.arm(fixturesActive = false))
+        assertEquals(PlayerEngine.EXO, override.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+        assertTrue(override.arm(fixturesActive = true))
+    }
+
+    @Test fun `MPV request override is release inert and fixture B only`() {
+        val release = TvFixtureMpvEngineOverride(debugBuild = false)
+        assertFalse(release.arm(fixturesActive = true))
+        assertEquals(PlayerEngine.EXO, release.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+
+        val debug = TvFixtureMpvEngineOverride(debugBuild = true)
+        assertTrue(debug.arm(fixturesActive = true))
+        assertEquals(PlayerEngine.EXO, debug.requestedEngineFor(TvValidationFixtures.mediaId("A"), PlayerEngine.EXO, fixturesActive = true))
+        assertEquals(PlayerEngine.EXO, debug.requestedEngineFor(TvValidationFixtures.mediaId("C"), PlayerEngine.EXO, fixturesActive = true))
+        assertEquals(PlayerEngine.MPV, debug.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+        assertEquals(PlayerEngine.EXO, debug.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+    }
+
+    @Test fun `fresh fixture sequence reset clears armed MPV request override`() {
+        val override = TvFixtureMpvEngineOverride(debugBuild = true)
+        assertTrue(override.arm(fixturesActive = true))
+        override.reset()
+        assertEquals(PlayerEngine.EXO, override.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
     }
 
     private fun target(id: String, videoId: String? = "catalog-$id") = TvStreamTarget(

@@ -25,6 +25,9 @@ class PlaybackReuseTest {
         assertNull(findReusableExoPlayer(exo, PlayerEngine.EXO, defaultKey.copy(hardwareDecoding = false)))
         assertNull(findReusableExoPlayer(exo, PlayerEngine.EXO, defaultKey.copy(audioPassthrough = true)))
         assertNull(findReusableExoPlayer(exo, PlayerEngine.EXO, defaultKey.copy(surroundSound = true)))
+        assertEquals("hardware-decoding-changed", reuseRejectionReason(exo, PlayerEngine.EXO, defaultKey.copy(hardwareDecoding = false)))
+        assertEquals("audio-passthrough-changed", reuseRejectionReason(exo, PlayerEngine.EXO, defaultKey.copy(audioPassthrough = true)))
+        assertEquals("surround-sound-changed", reuseRejectionReason(exo, PlayerEngine.EXO, defaultKey.copy(surroundSound = true)))
     }
 
     @Test fun mpvRequestNeverReusesExo() {
@@ -40,14 +43,16 @@ class PlaybackReuseTest {
 
     @Test fun incompatibleExoSettingsFallBackToRecreation() {
         val current = FakePlayer(PlayerEngine.EXO, defaultKey, 1)
+        val requested = defaultKey.copy(surroundSound = true)
         assertNull(
             selectReusablePlayer(
                 current,
                 PlayerEngine.EXO,
-                defaultKey.copy(surroundSound = true),
+                requested,
                 reuseOptIn = true,
             ),
         )
+        assertEquals("surround-sound-changed", reuseRejectionReason(current, PlayerEngine.EXO, requested))
     }
 
     @Test fun itemStateResetClearsFileSpecificValuesAndGenerationRejectsOldEvents() {
@@ -74,6 +79,7 @@ class PlaybackReuseTest {
         override val constructionKey: ExoConstructionKey,
         override val instanceId: Long,
     ) : ReusableExoPlayer {
+        override val itemGeneration: Long = 1
         override val runtimeState: StateFlow<PlayerRuntimeState> = MutableStateFlow(PlayerRuntimeState())
         var releaseCount = 0
         override fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) = Unit

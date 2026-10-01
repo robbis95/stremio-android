@@ -170,6 +170,8 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                 title = "Reuse experiment $label",
                 engine = PlayerEngine.EXO,
                 reuseExoPlayer = reuse,
+                attemptId = experimentId,
+                mediaId = label,
             )
         }.onSuccess { player = playbackManager.getPlayer() }
             .onFailure { playbackState = playbackState.copy(stage = TvPlaybackStage.Error, error = it.message) }

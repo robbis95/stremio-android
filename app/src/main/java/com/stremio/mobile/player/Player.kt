@@ -111,6 +111,18 @@ interface Player {
 
     fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?)
 
+    /** Associates debug lifecycle diagnostics with the TV playback attempt using this player. */
+    fun setPlaybackAttemptId(attemptId: String?) = Unit
+
+    /** Associates debug lifecycle diagnostics with the media item using this player. */
+    fun setPlaybackMediaId(mediaId: String?) = Unit
+
+    /** Called when the AndroidView that owns this output leaves composition. */
+    fun detachView(view: View) = Unit
+
+    /** Clears the currently attached video output before an item handoff. */
+    fun detachOutput() = Unit
+
     fun createView(context: Context): View
     fun load(
         uri: Uri,
@@ -138,6 +150,7 @@ interface Player {
 internal interface ReusableExoPlayer : Player {
     val constructionKey: ExoConstructionKey
     val instanceId: Long
+    val itemGeneration: Long
 }
 
 internal class ExoItemState {

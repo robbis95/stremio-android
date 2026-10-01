@@ -42,6 +42,7 @@ class ExoStreamPlayer(
     override val engine: PlayerEngine = PlayerEngine.EXO
     override val constructionKey: ExoConstructionKey = ExoConstructionKey.from(settings)
     override val instanceId: Long = nextInstanceId.incrementAndGet()
+    override val itemGeneration: Long get() = currentGeneration
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -110,9 +111,12 @@ class ExoStreamPlayer(
     }
 
     private var playerView: PlayerView? = null
+    private var currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
     private var currentSubtitleStyle = PlayerSubtitleStyle()
     private val firstVisualSignal = FirstVisualSignalGate()
     private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
+    private var playbackAttemptId: String? = null
+    private var playbackMediaId: String? = null
 
     private val itemState = ExoItemState()
     private val itemLoadGeneration = ItemLoadGeneration()
@@ -133,8 +137,11 @@ class ExoStreamPlayer(
     override fun createView(context: Context): View {
         // A keyed Compose AndroidView can be replaced while this player survives. Detach
         // the old output before attaching the new PlayerView so only one surface is active.
-        val resizeMode = playerView?.resizeMode ?: AspectRatioFrameLayout.RESIZE_MODE_FIT
-        playerView?.player = null
+        val resizeMode = currentResizeMode
+        playerView?.let { oldView ->
+            oldView.player = null
+            playbackReuseLog("output-detach attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$currentGeneration media=${playbackMediaId ?: "unknown"} reason=replaced-view")
+        }
         return PlayerView(context).apply {
             useController = false
             setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
@@ -142,12 +149,38 @@ class ExoStreamPlayer(
             this.resizeMode = resizeMode
             player = exoPlayer
             playerView = this
+            playbackReuseLog("output-attach attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$currentGeneration media=${playbackMediaId ?: "unknown"}")
             applySubtitleStyleToView()
         }
     }
 
     override fun setPlaybackEventListener(listener: ((PlayerPlaybackEvent) -> Unit)?) {
         playbackEventListener = listener
+    }
+
+    override fun setPlaybackAttemptId(attemptId: String?) {
+        playbackAttemptId = attemptId
+    }
+
+    override fun setPlaybackMediaId(mediaId: String?) {
+        playbackMediaId = mediaId
+    }
+
+    override fun detachView(view: View) {
+        val current = playerView
+        if (current !== view) return
+        detachOutput(reason = "view-released")
+    }
+
+    override fun detachOutput() {
+        detachOutput(reason = "handoff")
+    }
+
+    private fun detachOutput(reason: String) {
+        val current = playerView ?: return
+        current.player = null
+        playerView = null
+        playbackReuseLog("output-detach attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$currentGeneration media=${playbackMediaId ?: "unknown"} reason=$reason")
     }
 
     override fun load(
@@ -170,7 +203,7 @@ class ExoStreamPlayer(
         itemState.subtitles = subtitles
         itemState.preferredSubtitleLang = preferredSubtitleLang
 
-        playbackReuseLog("Exo load instance=$instanceId generation=$generation item=item-$generation")
+        playbackReuseLog("Exo load attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$generation media=${playbackMediaId ?: "unknown"}")
         val mediaItem = buildMediaItem(uri, subtitles, preferredSubtitleLang)
         exoPlayer.setMediaItem(mediaItem, startPositionMs)
         exoPlayer.prepare()
@@ -214,11 +247,12 @@ class ExoStreamPlayer(
     }
 
     override fun setResizeMode(mode: PlayerResizeMode) {
-        playerView?.resizeMode = when (mode) {
+        currentResizeMode = when (mode) {
             PlayerResizeMode.FIT -> AspectRatioFrameLayout.RESIZE_MODE_FIT
             PlayerResizeMode.STRETCH -> AspectRatioFrameLayout.RESIZE_MODE_FILL
             PlayerResizeMode.ZOOM -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         }
+        playerView?.resizeMode = currentResizeMode
     }
 
     override fun selectAudioTrack(id: String) {
@@ -275,10 +309,13 @@ class ExoStreamPlayer(
 
     override fun release() {
         scope.cancel()
-        playerView?.player = null
+        playerView?.let { view ->
+            view.player = null
+            playbackReuseLog("output-detach attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$currentGeneration media=${playbackMediaId ?: "unknown"} reason=release")
+        }
         playerView = null
         exoPlayer.removeListener(listener)
-        playbackReuseLog("Exo released instance=$instanceId generation=$currentGeneration")
+        playbackReuseLog("Exo released attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$currentGeneration media=${playbackMediaId ?: "unknown"}")
         exoPlayer.release()
         mutableRuntimeState.value = PlayerRuntimeState()
     }
@@ -313,7 +350,7 @@ class ExoStreamPlayer(
 
         override fun onRenderedFirstFrame() {
             if (!isCurrentLoad() || !firstVisualSignal.tryEmit()) return
-            playbackReuseLog("Exo first-visual instance=$instanceId generation=$generation item=item-$generation")
+            playbackReuseLog("Exo first-visual attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$generation media=${playbackMediaId ?: "unknown"}")
             playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
         }
 

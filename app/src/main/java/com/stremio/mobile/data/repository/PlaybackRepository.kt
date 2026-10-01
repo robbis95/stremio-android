@@ -44,6 +44,10 @@ class PlaybackRepository(
 
     fun attachView(view: android.view.View) = playbackManager.attachView(view)
 
+    fun detachView(view: android.view.View) = playbackManager.getPlayer()?.detachView(view)
+
+    fun detachOutput() = playbackManager.detachOutput()
+
     fun detachView() = playbackManager.detachView()
 
     fun release() = playbackManager.release()
@@ -52,6 +56,10 @@ class PlaybackRepository(
         option: StreamOption,
         engine: PlayerEngine = PlayerEngine.EXO,
         displayTitle: String? = null,
+        attemptId: String? = null,
+        mediaId: String? = null,
+        reuseExoPlayer: Boolean = false,
+        eventListener: ((com.stremio.mobile.player.PlayerPlaybackEvent) -> Unit)? = null,
         onEvent: ((PlaybackLoadEvent) -> Unit)? = null,
     ): Boolean {
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.ResolutionStarted, android.os.SystemClock.elapsedRealtimeNanos()))
@@ -91,6 +99,9 @@ class PlaybackRepository(
         val settings = runCatching { core.getCtx().profile.settings }.getOrNull()
 
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayerLoadStarted, android.os.SystemClock.elapsedRealtimeNanos()))
+        // Keep the current Player listener through source resolution. PlaybackManager transfers
+        // this pending listener to the new attempt immediately before its item load starts.
+        if (eventListener != null) playbackManager.setPlaybackEventListener(eventListener)
         playbackManager.load(
             uri = Uri.parse(url),
             title = displayTitle ?: option.name,
@@ -99,6 +110,9 @@ class PlaybackRepository(
             preferredSubtitleLang = preferredLang,
             engine = engine,
             settings = settings,
+            reuseExoPlayer = reuseExoPlayer,
+            attemptId = attemptId,
+            mediaId = mediaId,
         )
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayerLoadReturned, android.os.SystemClock.elapsedRealtimeNanos()))
         return true

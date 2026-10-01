@@ -236,6 +236,7 @@ internal fun TvPlayerScreen(
                     modifier = Modifier.fillMaxSize(),
                     factory = { viewContext -> player.createView(viewContext).apply { keepScreenOn = true } },
                     update = View::requestLayout,
+                    onRelease = player::detachView,
                 )
             }
         }

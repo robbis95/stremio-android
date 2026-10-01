@@ -165,6 +165,7 @@ class MainViewModel(
     private val _tvPlayback = MutableStateFlow(TvPlaybackUiState())
     internal val tvPlayback: StateFlow<TvPlaybackUiState> = _tvPlayback.asStateFlow()
     private var tvPlaybackJob: Job? = null
+    private var tvReusePendingAttemptId: String? = null
     private var tvPlaybackMonitorJob: Job? = null
     private var tvSkipSegmentsJob: Job? = null
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
@@ -2109,18 +2110,28 @@ class MainViewModel(
     }
 
     /** Starts the explicitly activated TV source without entering the mobile autoplay/health path. */
-    internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption) {
+    internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption, reuseExistingExo: Boolean = false) {
         cancelTvNextEpisodePrefetch("attempt-changed")
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
         tvSkipSegmentsJob?.cancel()
         latestTvCorePlayer = null
-        playbackRepository.setPlaybackEventListener(null)
-        playbackRepository.release()
+        val heldExoForReuse = reuseExistingExo && playbackRepository.getPlayer()?.engine == PlayerEngine.EXO
+        if (heldExoForReuse) {
+            playbackRepository.getPlayer()?.pause()
+            playbackRepository.detachOutput()
+        } else {
+            playbackRepository.setPlaybackEventListener(null)
+            playbackRepository.release()
+        }
 
         val requestedEngine = PlayerEngine.fromProfileValue(profileSettings.value?.playerType)
         val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
+        tvReusePendingAttemptId = attempt.attemptId.takeIf { heldExoForReuse }
+        if (reuseExistingExo && BuildConfig.DEBUG) {
+            Log.d("PlaybackReuse", "next-episode requested attempt=${attempt.attemptId} previousAttempt=${_tvPlayback.value.playbackAttemptId ?: "unknown"} media=${target.videoId ?: target.contentId}")
+        }
         tvEpisodeTransition.trace?.let { transition ->
             if (transition.targetKey == target.semanticTargetKey) {
                 tvEpisodeTransition.sourceActivated(transition.oldAttemptId, attempt.attemptId, attempt.startedAtNanos)
@@ -2170,13 +2181,19 @@ class MainViewModel(
                 } else {
                     _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "not-required")
                 }
-                playbackRepository.setPlaybackEventListener { event -> onTvPlaybackEvent(attempt, event) }
                 val loaded = playbackRepository.resolveAndLoadStream(
                     option = option,
                     engine = requestedEngine,
                     displayTitle = listOfNotNull(target.contentName, target.episodeLabel).joinToString(" · "),
+                    attemptId = attempt.attemptId,
+                    mediaId = target.videoId ?: target.contentId,
+                    reuseExoPlayer = reuseExistingExo,
+                    eventListener = { event -> onTvPlaybackEvent(attempt, event) },
                     onEvent = { event ->
                         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@resolveAndLoadStream
+                        if (event.stage == PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved && BuildConfig.DEBUG) {
+                            Log.d("PlaybackReuse", "source-resolved attempt=${attempt.attemptId} media=${target.videoId ?: target.contentId}")
+                        }
                         _tvPlayback.value = _tvPlayback.value.copy(
                             stage = when (event.stage) {
                                 PlaybackRepository.PlaybackLoadStage.ResolutionStarted -> TvPlaybackStage.Resolving
@@ -2200,6 +2217,7 @@ class MainViewModel(
                     failTvPlayback(attempt, "Couldn’t start this source", PlaybackResolutionFailure.NoPlayableSource.name)
                     return@launch
                 }
+                if (tvReusePendingAttemptId == attempt.attemptId) tvReusePendingAttemptId = null
                 val actualEngine = playbackRepository.actualEngine()
                 _tvPlayback.value = _tvPlayback.value.copy(
                     stage = TvPlaybackStage.Preparing,
@@ -2621,7 +2639,10 @@ class MainViewModel(
             logTvEpisodeTransition(committed)
             // Core mutates the current LibraryItem and emits next-video before Player.Load.
             playbackRepository.reportNextVideo()
-            startTvPlayback(target, option)
+            if (BuildConfig.DEBUG) {
+                Log.d("PlaybackReuse", "next-episode load-request attempt=${latest.playbackAttemptId} media=${target.videoId ?: target.contentId}")
+            }
+            startTvPlayback(target, option, reuseExistingExo = true)
         }
     }
 
@@ -2645,6 +2666,11 @@ class MainViewModel(
 
     private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        if (tvReusePendingAttemptId == attempt.attemptId) {
+            tvReusePendingAttemptId = null
+            playbackRepository.setPlaybackEventListener(null)
+            playbackRepository.release()
+        }
         _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
         tvEpisodeTransition.reset()
         Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
@@ -2707,6 +2733,7 @@ class MainViewModel(
         tvNextVideo = null
         playbackRepository.setPlaybackEventListener(null)
         playbackRepository.release()
+        tvReusePendingAttemptId = null
         lastTvTimeReportNanos = 0L
         _tvPlayback.value = TvPlaybackUiState()
     }

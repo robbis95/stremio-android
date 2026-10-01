@@ -126,7 +126,13 @@ internal fun TvStreamsScreen(
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             OutlinedButton(
                 onClick = onBack,
-                modifier = Modifier.focusRequester(backRequester),
+                modifier = Modifier.focusRequester(backRequester)
+                    .onKeyEvent { event ->
+                        if (BuildConfig.DEBUG && event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                            validationRequester.requestFocus()
+                            true
+                        } else false
+                    },
             ) { Text("Back") }
             Column(Modifier.weight(1f).padding(start = 18.dp)) {
                 Text("Choose Source", style = MaterialTheme.typography.headlineSmall, color = TvColors.primaryText)
@@ -243,11 +249,7 @@ internal fun TvStreamsScreen(
                                     Key.DirectionUp, Key.DirectionDown -> {
                                         val nextIndex = if (event.key == Key.DirectionUp) index - 1 else index + 1
                                         if (nextIndex !in visible.indices) {
-                                            if (event.key == Key.DirectionUp && index == 0) {
-                                                if (showFilter) providerRequesters[state.selectedProvider ?: "all"]?.requestFocus()
-                                                    ?: backRequester.requestFocus()
-                                            }
-                                            true
+                                            if (event.key == Key.DirectionUp && index == 0) false else true
                                         } else {
                                             val nextKey = visible[nextIndex].semanticKey
                                             scope.launch {

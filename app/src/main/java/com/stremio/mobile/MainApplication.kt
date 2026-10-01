@@ -53,7 +53,7 @@ class CrashlyticsTree : Timber.Tree() {
     }
 }
 
-class MainApplication : Application(), SingletonImageLoader.Factory {
+open class MainApplication : Application(), SingletonImageLoader.Factory {
     lateinit var container: AppContainer
         private set
 

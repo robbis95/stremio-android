@@ -89,6 +89,12 @@ class TvPlaybackStateTest {
         assertFalse(isCurrentTvAttempt(TvPlaybackUiState(), attempt.attemptId))
     }
 
+    @Test fun `failed source resolution releases only the retained player owned by that reuse attempt`() {
+        assertTrue(shouldReleaseRetainedPlayerAfterTvFailure("attempt-b", "attempt-b"))
+        assertFalse(shouldReleaseRetainedPlayerAfterTvFailure("attempt-b", "stale-attempt"))
+        assertFalse(shouldReleaseRetainedPlayerAfterTvFailure(null, "cold-attempt"))
+    }
+
     @Test fun `selected source key remains available after player route closes`() {
         val options = listOf(option("first"), option("selected"))
         val selection = TvStreamSelectionUiState(target = target, options = options, selectedStreamKey = "selected")

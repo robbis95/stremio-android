@@ -14,6 +14,10 @@ import com.stremio.mobile.data.repository.AuthRepository
 import com.stremio.mobile.data.repository.BoardRepository
 import com.stremio.mobile.data.repository.CatalogRepository
 import com.stremio.mobile.data.repository.PlaybackRepository
+import com.stremio.mobile.data.repository.CorePlayableSourceResolver
+import com.stremio.mobile.presentation.tv.TvValidationFixtures
+import com.stremio.mobile.presentation.tv.CoreTvNextVideoProvider
+import com.stremio.mobile.presentation.tv.FixtureAwareTvNextVideoProvider
 import com.stremio.mobile.update.ApkInstaller
 import com.stremio.mobile.update.UpdateRepository
 
@@ -31,7 +35,18 @@ class AppContainer(context: Context) {
     val boardRepository = BoardRepository(core)
     val catalogRepository = CatalogRepository(core)
     val addonRepository = AddonRepository(core)
-    val playbackRepository = PlaybackRepository(core, playbackManager)
+    private val corePlayableSourceResolver = CorePlayableSourceResolver(core)
+    val tvValidationFixtures = TvValidationFixtures(context.applicationContext, corePlayableSourceResolver)
+    val playbackRepository = PlaybackRepository(
+        core,
+        playbackManager,
+        tvValidationFixtures,
+        debugSettingsOverride = tvValidationFixtures::constructionSettingsFor,
+    )
+    internal val tvNextVideoProvider = FixtureAwareTvNextVideoProvider(
+        CoreTvNextVideoProvider { playbackRepository.getNextVideo() },
+        tvValidationFixtures,
+    )
     val updateRepository = UpdateRepository(context.applicationContext)
     val apkInstaller = ApkInstaller(context.applicationContext)
 

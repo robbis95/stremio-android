@@ -42,6 +42,7 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
+import com.stremio.mobile.BuildConfig
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import kotlinx.coroutines.launch
@@ -54,6 +55,8 @@ internal fun TvStreamsScreen(
     onSelectProvider: (String?) -> Unit,
     onSelectStream: (String) -> Unit,
     onFocusChanged: (String, TvStreamFocusMemory) -> Unit,
+    onEnableValidationMedia: () -> Unit = {},
+    onArmIncompatibleValidation: () -> Unit = {},
 ) {
     val target = state.target ?: return
     val targetKey = target.semanticTargetKey
@@ -61,6 +64,8 @@ internal fun TvStreamsScreen(
     val listState = rememberLazyListState(saved.firstVisibleIndex, saved.firstVisibleOffset)
     val scope = rememberCoroutineScope()
     val backRequester = remember(targetKey) { FocusRequester() }
+    val validationRequester = remember(targetKey) { FocusRequester() }
+    val incompatibleRequester = remember(targetKey) { FocusRequester() }
     val providerRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val streamRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val visible = state.visibleOptions
@@ -77,6 +82,13 @@ internal fun TvStreamsScreen(
                 didRestoreFocus = true
                 if (savedKey != null) {
                     val index = restoredStreamIndex(visible, savedKey, saved.fallbackIndex) ?: return@LaunchedEffect
+                    listState.scrollToItem(index)
+                    kotlinx.coroutines.yield()
+                    val key = visible[index].semanticKey
+                    focusedKey = key
+                    streamRequesters.getOrPut(key) { FocusRequester() }.requestFocus()
+                } else {
+                    val index = restoredStreamIndex(visible, null, saved.fallbackIndex) ?: return@LaunchedEffect
                     listState.scrollToItem(index)
                     kotlinx.coroutines.yield()
                     val key = visible[index].semanticKey
@@ -131,6 +143,23 @@ internal fun TvStreamsScreen(
             }
         }
 
+        if (BuildConfig.DEBUG) {
+            OutlinedButton(
+                onClick = onEnableValidationMedia,
+                modifier = Modifier.focusRequester(validationRequester).padding(top = 8.dp)
+                    .focusProperties { up = backRequester; down = incompatibleRequester },
+            ) {
+                Text("Use bundled validation media (A → B → C)")
+            }
+            OutlinedButton(
+                onClick = onArmIncompatibleValidation,
+                modifier = Modifier.focusRequester(incompatibleRequester).padding(top = 4.dp)
+                    .focusProperties { up = validationRequester; down = providerRequesters.getOrPut("all") { FocusRequester() } },
+            ) {
+                Text("DEBUG: force hardware-decoding recreation on B")
+            }
+        }
+
         if (showFilter) {
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -139,6 +168,7 @@ internal fun TvStreamsScreen(
                     val requester = providerRequesters.getOrPut(id ?: "all") { FocusRequester() }
                     val active = state.selectedProvider == id
                     val buttonModifier = Modifier.focusRequester(requester).focusProperties {
+                        up = if (index == 0) incompatibleRequester else providerRequesters.getOrPut(filterIds[index - 1] ?: "all") { FocusRequester() }
                         left = if (index == 0) backRequester else providerRequesters.getOrPut(filterIds[index - 1] ?: "all") { FocusRequester() }
                         right = providerRequesters.getOrPut(filterIds.getOrNull(index + 1) ?: id ?: "all") { FocusRequester() }
                         down = streamRequesters[focusedKey] ?: backRequester

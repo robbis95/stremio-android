@@ -287,6 +287,8 @@ internal fun TvApp(viewModel: MainViewModel) {
                                 routeName = TvRouteState(TvRoute.Streams, detailsOrigin).openPlayer().route.name
                             },
                             onFocusChanged = { targetKey, memory -> streamFocusMemory[targetKey] = memory },
+                            onEnableValidationMedia = viewModel::enableTvValidationMedia,
+                            onArmIncompatibleValidation = viewModel::armTvIncompatibleConstructionValidation,
                         )
                     }
                     if (route == TvRoute.Player) {
@@ -302,16 +304,13 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onSeekTo = viewModel::seekTvPlaybackTo,
                             onRetry = viewModel::retryTvPlayback,
                             onAudioTrackSelected = { track ->
-                                viewModel.tvPlaybackPlayer()?.selectAudioTrack(track.id)
-                                viewModel.rememberAudioTrack(track)
+                                viewModel.selectTvAudioTrack(track)
                             },
                             onSubtitleTrackSelected = { track ->
-                                viewModel.tvPlaybackPlayer()?.selectSubtitleTrack(track.id)
-                                viewModel.rememberSubtitleTrack(track)
+                                viewModel.selectTvSubtitleTrack(track)
                             },
                             onSubtitlesDisabled = {
-                                viewModel.tvPlaybackPlayer()?.disableSubtitles()
-                                viewModel.rememberSubtitlesDisabled()
+                                viewModel.disableTvSubtitles()
                             },
                             subtitleStyle = subtitleStyle,
                             onSubtitleStyleChanged = { style ->

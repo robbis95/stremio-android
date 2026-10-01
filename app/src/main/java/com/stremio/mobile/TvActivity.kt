@@ -26,6 +26,8 @@ class TvActivity : ComponentActivity() {
                 serverController = app.container.serverController,
                 core = app.container.core,
                 appContext = app.applicationContext,
+                tvValidationFixtures = app.container.tvValidationFixtures,
+                tvNextVideoProvider = app.container.tvNextVideoProvider,
             ) as T
         }
     }

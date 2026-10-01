@@ -2,6 +2,7 @@ package com.stremio.mobile.data.repository
 
 import android.net.Uri
 import com.stremio.mobile.core.StremioCore
+import com.stremio.mobile.BuildConfig
 import com.stremio.mobile.core.PlaybackResolutionException
 import com.stremio.mobile.core.PlaybackResolutionFailure
 import com.stremio.mobile.core.ResolvedPlayableSource
@@ -25,7 +26,9 @@ import kotlinx.coroutines.TimeoutCancellationException
 
 class PlaybackRepository(
     private val core: StremioCore,
-    private val playbackManager: PlaybackManager
+    private val playbackManager: PlaybackManager,
+    private val playableSourceResolver: PlayableSourceResolver = CorePlayableSourceResolver(core),
+    private val debugSettingsOverride: (String?, com.stremio.core.types.profile.Profile.Settings?) -> com.stremio.core.types.profile.Profile.Settings? = { _, settings -> settings },
 ) {
     enum class PlaybackLoadStage { ResolutionStarted, PlayableSourceResolved, PlayerLoadStarted, PlayerLoadReturned }
     data class PlaybackLoadEvent(
@@ -63,18 +66,7 @@ class PlaybackRepository(
         onEvent: ((PlaybackLoadEvent) -> Unit)? = null,
     ): Boolean {
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.ResolutionStarted, android.os.SystemClock.elapsedRealtimeNanos()))
-        val resolvedSource = try {
-            withTimeout(CORE_RESOLUTION_TIMEOUT_MS) { core.resolvePlayableUrl(option.core).first() }
-        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-            if (cancelled is TimeoutCancellationException) {
-                throw coreResolutionTimeoutFailure()
-            }
-            throw cancelled
-        } catch (failure: PlaybackResolutionException) {
-            throw failure
-        } catch (_: Exception) {
-            throw PlaybackResolutionException(PlaybackResolutionFailure.CoreConversionError)
-        }
+        val resolvedSource = playableSourceResolver.resolve(option)
         val url = resolvedSource.playableUri
 
         if (url.isNullOrBlank()) {
@@ -96,7 +88,8 @@ class PlaybackRepository(
         }
         val preferredLang = runCatching { core.getSubtitleSettings().language }.getOrNull()
         val startPositionMs = runCatching { core.getResumePositionMs(option.core.streamRequest) }.getOrDefault(0L)
-        val settings = runCatching { core.getCtx().profile.settings }.getOrNull()
+        val coreSettings = runCatching { core.getCtx().profile.settings }.getOrNull()
+        val settings = if (BuildConfig.DEBUG) debugSettingsOverride(mediaId, coreSettings) else coreSettings
 
         onEvent?.invoke(PlaybackLoadEvent(PlaybackLoadStage.PlayerLoadStarted, android.os.SystemClock.elapsedRealtimeNanos()))
         // Keep the current Player listener through source resolution. PlaybackManager transfers

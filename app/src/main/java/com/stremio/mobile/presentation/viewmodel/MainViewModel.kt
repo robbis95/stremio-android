@@ -58,6 +58,7 @@ import com.stremio.mobile.presentation.tv.TvNextEpisodeState
 import com.stremio.mobile.presentation.tv.TvNextEpisodeTransition
 import com.stremio.mobile.presentation.tv.isCurrentTvNextEpisode
 import com.stremio.mobile.presentation.tv.isCurrentTvAttempt
+import com.stremio.mobile.presentation.tv.shouldReleaseRetainedPlayerAfterTvFailure
 import com.stremio.mobile.presentation.tv.tvProgressReportingAllowed
 import com.stremio.mobile.presentation.tv.clampTvSeekTarget
 import com.stremio.mobile.presentation.tv.safeTvPlaybackTrace
@@ -69,6 +70,10 @@ import com.stremio.mobile.presentation.tv.tvShouldAutoAdvanceEnded
 import com.stremio.mobile.presentation.tv.nextEpisodeTarget
 import com.stremio.mobile.presentation.tv.preferredNextEpisodeOption
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
+import com.stremio.mobile.presentation.tv.TvValidationFixtures
+import com.stremio.mobile.presentation.tv.TvNextVideoProvider
+import com.stremio.mobile.presentation.tv.CoreTvNextVideoProvider
+import com.stremio.mobile.presentation.tv.tvNextVideoForAttempt
 import com.stremio.mobile.presentation.tv.tvStreamTargetMatches
 import com.stremio.mobile.presentation.tv.mapTvStreamEmission
 import com.stremio.mobile.presentation.tv.stableInteractionOptions
@@ -120,7 +125,7 @@ data class TvAccountLinkUiState(
     val error: String? = null,
 )
 
-class MainViewModel(
+class MainViewModel internal constructor(
     private val authRepository: AuthRepository,
     private val boardRepository: BoardRepository,
     private val catalogRepository: CatalogRepository,
@@ -131,7 +136,10 @@ class MainViewModel(
     private val serverController: StreamingServerController,
     private val core: StremioCore,
     appContext: Context,
+    private val tvValidationFixtures: TvValidationFixtures? = null,
+    tvNextVideoProvider: TvNextVideoProvider? = null,
 ) : ViewModel() {
+    private val tvNextVideoProvider = tvNextVideoProvider ?: CoreTvNextVideoProvider { playbackRepository.getNextVideo() }
     private val appContext = appContext.applicationContext
     private val latestIntentUri = MutableStateFlow<String?>(null)
     private val account = MutableStateFlow(authRepository.accountFromCore())
@@ -2002,6 +2010,18 @@ class MainViewModel(
         )
         tvStreamsJob = viewModelScope.launch {
             try {
+                tvValidationFixtures?.optionsFor(target)?.let { options ->
+                    if (_tvStreamSelection.value.target?.semanticTargetKey == target.semanticTargetKey) {
+                        val selectedKey = keepSelectionIfPresent(previous?.selectedStreamKey, options) ?: options.first().semanticKey
+                        _tvStreamSelection.value = TvStreamSelectionUiState(
+                            target = target,
+                            options = options,
+                            selectedStreamKey = selectedKey,
+                            isActive = true,
+                        )
+                    }
+                    return@launch
+                }
                 catalogRepository.getMetaDetailsFlow(
                     type = target.contentType,
                     id = target.contentId,
@@ -2095,6 +2115,16 @@ class MainViewModel(
         }
     }
 
+    internal fun enableTvValidationMedia() {
+        val target = _tvStreamSelection.value.target ?: return
+        if (tvValidationFixtures?.enableForCurrentSequence() == true) openTvStreams(target)
+    }
+
+    internal fun armTvIncompatibleConstructionValidation() {
+        val armed = tvValidationFixtures?.armHardwareDecodingMismatch() == true
+        if (BuildConfig.DEBUG && armed) Log.i("TvValidation", "incompatible-transition armed setting=hardwareDecoding media=fixture-B-and-C")
+    }
+
     internal fun selectTvProvider(providerIdentity: String?) {
         val state = _tvStreamSelection.value
         _tvStreamSelection.value = state.copy(
@@ -2150,7 +2180,7 @@ class MainViewModel(
             stage = TvPlaybackStage.Resolving,
             requestedEngine = requestedEngine,
             timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
-            nextEpisode = nextEpisodeStateFor(attempt.attemptId),
+            nextEpisode = nextEpisodeStateFor(attempt.attemptId, target),
         )
         lastTvTimeReportNanos = 0L
         Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated", server = if (serverRequired) "pending" else "not-required"))
@@ -2192,7 +2222,7 @@ class MainViewModel(
                     onEvent = { event ->
                         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@resolveAndLoadStream
                         if (event.stage == PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved && BuildConfig.DEBUG) {
-                            Log.d("PlaybackReuse", "source-resolved attempt=${attempt.attemptId} media=${target.videoId ?: target.contentId}")
+                            Log.d("PlaybackReuse", "source-resolved attempt=${attempt.attemptId} media=${target.videoId ?: target.contentId} kind=${event.source?.resolutionKind ?: "core"}")
                         }
                         _tvPlayback.value = _tvPlayback.value.copy(
                             stage = when (event.stage) {
@@ -2417,8 +2447,8 @@ class MainViewModel(
         }
     }
 
-    private fun nextEpisodeStateFor(attemptId: String): TvNextEpisodeState {
-        val video = playbackRepository.getNextVideo()
+    private fun nextEpisodeStateFor(attemptId: String, target: TvStreamTarget): TvNextEpisodeState {
+        val video = tvNextVideoForAttempt(tvNextVideoProvider, target, attemptId, attemptId)
         tvNextVideoAttemptId = attemptId
         tvNextVideo = video
         return nextEpisodeState(attemptId, video)
@@ -2443,7 +2473,8 @@ class MainViewModel(
 
     private fun syncTvNextVideo(attemptId: String) {
         if (tvNextVideoAttemptId != attemptId) return
-        val latest = playbackRepository.getNextVideo()
+        val target = _tvPlayback.value.attempt?.target ?: return
+        val latest = tvNextVideoForAttempt(tvNextVideoProvider, target, attemptId, _tvPlayback.value.attempt?.attemptId)
         if (latest?.id == tvNextVideo?.id) return
         cancelTvNextEpisodePrefetch("next-video-changed")
         tvNextVideo = latest
@@ -2476,14 +2507,15 @@ class MainViewModel(
         logTvPrefetch("started", target, attempt.attemptId)
         request.job = viewModelScope.launch {
             try {
-                val finalEmission = catalogRepository.getMetaDetailsFlow(
+                val fixtureOptions = tvValidationFixtures?.optionsFor(target)
+                val options = fixtureOptions ?: catalogRepository.getMetaDetailsFlow(
                     type = target.contentType,
                     id = target.contentId,
                     videoId = target.videoId,
                     guessStreamPath = target.guessStreamPath,
                 ).mapNotNull { details ->
                     if (!tvStreamTargetMatches(details, target)) null else mapTvStreamEmission(details)
-                }.first { emission -> !emission.isLoading }
+                }.first { emission -> !emission.isLoading }.options
                 if (!tvNextEpisodePrefetch.isCurrent(request) ||
                     !isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId) ||
                     tvNextVideoAttemptId != attempt.attemptId || tvNextVideo?.id != target.videoId
@@ -2491,8 +2523,8 @@ class MainViewModel(
                     cancelTvNextEpisodePrefetchRequest(request, "stale")
                     return@launch
                 }
-                if (request.result.complete(finalEmission.options.takeIf { it.isNotEmpty() })) {
-                    logTvPrefetchReady(target, attempt.attemptId, finalEmission.options.size, request.startedAtNanos)
+                if (request.result.complete(options.takeIf { it.isNotEmpty() })) {
+                    logTvPrefetchReady(target, attempt.attemptId, options.size, request.startedAtNanos)
                 }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -2620,13 +2652,16 @@ class MainViewModel(
             ) ?: return@launch
             logTvEpisodeTransition(ready)
             val latest = _tvPlayback.value
-            val currentCoreNextId = playbackRepository.getNextVideo()?.id
+            val currentTarget = latest.attempt?.target
+            val currentProviderNextId = currentTarget?.let {
+                tvNextVideoForAttempt(tvNextVideoProvider, it, attemptId, latest.attempt?.attemptId)?.id
+            }
             val committed = tvEpisodeTransition.commit(
                 oldAttemptId = attemptId,
                 currentAttemptId = latest.attempt?.attemptId.takeIf { isCurrentTvAttempt(latest, attemptId) },
                 targetVideoId = target.videoId.orEmpty(),
                 currentVideoId = tvNextVideo?.id?.takeIf {
-                    tvNextVideoAttemptId == attemptId && currentCoreNextId == it
+                    tvNextVideoAttemptId == attemptId && currentProviderNextId == it
                 },
                 targetKey = target.semanticTargetKey,
                 hasUsableOption = true,
@@ -2666,7 +2701,7 @@ class MainViewModel(
 
     private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
-        if (tvReusePendingAttemptId == attempt.attemptId) {
+        if (shouldReleaseRetainedPlayerAfterTvFailure(tvReusePendingAttemptId, attempt.attemptId)) {
             tvReusePendingAttemptId = null
             playbackRepository.setPlaybackEventListener(null)
             playbackRepository.release()
@@ -2681,10 +2716,12 @@ class MainViewModel(
         if (state.stage == TvPlaybackStage.Ended || state.stage == TvPlaybackStage.Error) return
         val player = playbackRepository.getPlayer() ?: return
         if (state.runtime.isPlaying) {
+            logTvControl("pause", state, player, "positionMs=${state.runtime.positionMs}")
             player.pause()
             playbackRepository.reportPausedChanged(true)
             reportTvFinalProgress(state)
         } else {
+            logTvControl("resume", state, player, "positionMs=${state.runtime.positionMs}")
             player.play()
             playbackRepository.reportPausedChanged(false)
         }
@@ -2694,6 +2731,7 @@ class MainViewModel(
         val state = _tvPlayback.value
         if (!state.firstVisualObserved) return
         val target = clampTvSeekTarget(state.runtime.positionMs + deltaMs, state.runtime.durationMs) ?: return
+        playbackRepository.getPlayer()?.let { logTvControl("seek-relative", state, it, "deltaMs=$deltaMs targetMs=$target") }
         seekTvPlaybackTo(target)
     }
 
@@ -2702,9 +2740,46 @@ class MainViewModel(
         if (!state.firstVisualObserved || state.runtime.durationMs <= 0L) return
         val player = playbackRepository.getPlayer() ?: return
         val target = clampTvSeekTarget(targetMs, state.runtime.durationMs) ?: return
+        logTvControl("seek-direct", state, player, "targetMs=$target")
         player.seekTo(target)
         playbackRepository.reportSeek(target, state.runtime.durationMs)
         reportTvFinalProgress(state.copy(runtime = state.runtime.copy(positionMs = target)))
+    }
+
+    internal fun selectTvAudioTrack(track: PlayerTrackOption) {
+        val state = _tvPlayback.value
+        val player = playbackRepository.getPlayer() ?: return
+        logTvControl("audio-select", state, player, "trackId=${track.id} label=${track.label}")
+        player.selectAudioTrack(track.id)
+        rememberAudioTrack(track)
+    }
+
+    internal fun selectTvSubtitleTrack(track: PlayerTrackOption) {
+        val state = _tvPlayback.value
+        val player = playbackRepository.getPlayer() ?: return
+        logTvControl("subtitle-select", state, player, "trackId=${track.id} label=${track.label}")
+        player.selectSubtitleTrack(track.id)
+        rememberSubtitleTrack(track)
+    }
+
+    internal fun disableTvSubtitles() {
+        val state = _tvPlayback.value
+        val player = playbackRepository.getPlayer() ?: return
+        logTvControl("subtitle-disable", state, player, "")
+        player.disableSubtitles()
+        rememberSubtitlesDisabled()
+    }
+
+    private fun logTvControl(action: String, state: TvPlaybackUiState, player: com.stremio.mobile.player.Player, details: String) {
+        if (!BuildConfig.DEBUG) return
+        val attempt = state.attempt ?: return
+        val reusable = player as? com.stremio.mobile.player.ReusableExoPlayer
+        Log.d(
+            "TvPlaybackControl",
+            "action=$action attempt=${attempt.attemptId} media=${attempt.target.videoId ?: attempt.target.contentId} " +
+                "engine=${player.engine} instance=${reusable?.instanceId ?: "none"} generation=${reusable?.itemGeneration ?: "none"} " +
+                "stage=${state.stage} ${details.trim()}",
+        )
     }
 
     private fun reportTvFinalProgress(state: TvPlaybackUiState) {

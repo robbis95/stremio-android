@@ -121,6 +121,9 @@ internal data class TvPlaybackUiState(
 internal fun isCurrentTvAttempt(state: TvPlaybackUiState, attemptId: String): Boolean =
     state.attempt?.attemptId == attemptId
 
+internal fun shouldReleaseRetainedPlayerAfterTvFailure(retainedAttemptId: String?, failedAttemptId: String): Boolean =
+    retainedAttemptId != null && retainedAttemptId == failedAttemptId
+
 internal fun tvProgressReportingAllowed(state: TvPlaybackUiState): Boolean = state.firstVisualObserved
 
 internal data class TvEngineResult(val requested: PlayerEngine, val actual: PlayerEngine) {

@@ -11,6 +11,9 @@ internal data class TvSmartStreamCandidate(
     val quality: String,
     val seedsBucket: String,
     val effectiveQualityRank: Int,
+    val compatibility: Compatibility = Compatibility.Unknown,
+    val network: NetworkSustainability = NetworkSustainability.Unknown,
+    val codec: VideoCodec = VideoCodec.Unknown,
 )
 
 internal data class TvSmartStreamSelection(
@@ -21,14 +24,25 @@ internal data class TvSmartStreamSelection(
 
 /** Deterministic, explainable TV source ranking. Tuple comparisons avoid opaque weighted scores. */
 internal object TvSmartStreamSelector {
-    fun select(options: List<StreamOption>, preferredQuality: String? = null): TvSmartStreamSelection {
+    fun select(
+        options: List<StreamOption>, preferredQuality: String? = null,
+        device: DevicePlaybackCapabilities = DevicePlaybackCapabilities(),
+        network: NetworkPlaybackProfile = NetworkPlaybackProfile(),
+        durationSeconds: Long? = null,
+    ): TvSmartStreamSelection {
         val unique = options.distinctBy(StreamOption::semanticKey)
         if (unique.isEmpty()) return TvSmartStreamSelection(null, emptyList(), "no-candidates")
         val preferred = normalizeQuality(preferredQuality)
-        val ranked = unique.map { option -> score(option, preferred) }
+        val scores = unique.map { option -> score(option, preferred, device, network, durationSeconds) }
+        val eligible = scores.filter { it.compatibility != Compatibility.Incompatible }
+        val ranked = (eligible.ifEmpty { scores.filter { it.compatibility == Compatibility.Unknown } })
             .sortedWith { a, b -> compare(b, a) }
             .mapIndexed { index, candidate -> TvSmartStreamCandidate(candidate.option, index + 1, candidate.reasons, candidate.quality, candidate.seedsBucket, candidate.effectiveQualityRank) }
-        return TvSmartStreamSelection(ranked.first().option, ranked, ranked.first().reasons.joinToString(","))
+        val enriched = ranked.mapIndexed { index, c ->
+            val source = scores.first { it.option.semanticKey == c.option.semanticKey }
+            c.copy(rank = index + 1, compatibility = source.compatibility, network = source.network, codec = source.metadata.codec)
+        }
+        return TvSmartStreamSelection(enriched.firstOrNull()?.option, enriched, enriched.firstOrNull()?.reasons?.joinToString(","))
     }
 
     private data class Scored(
@@ -43,11 +57,20 @@ internal object TvSmartStreamSelector {
         val seedRank: Int,
         val effectiveQualityRank: Int,
         val sizeRank: Long,
+        val compatibility: Compatibility,
+        val network: NetworkSustainability,
+        val metadata: StreamVideoMetadata,
+        val slowNetworkSizeTieBreak: Boolean,
     )
 
-    private fun score(option: StreamOption, preferred: String?): Scored {
-        val quality = normalizeQuality(option.quality)
-            ?: parseQuality(option.name, option.description, option.filename)
+    private fun score(option: StreamOption, preferred: String?, device: DevicePlaybackCapabilities, network: NetworkPlaybackProfile, durationSeconds: Long?): Scored {
+        val metadata = parseStreamVideoMetadata(option, durationSeconds)
+        val quality = metadata.quality
+        val compatibility = compatibility(metadata, device)
+        val networkFit = networkSustainability(metadata.requiredBitrateBps, network)
+        val slowNetworkSizeTieBreak = network.estimateSource == NetworkEstimateSource.Media3Measured &&
+            network.confidence in setOf(NetworkEstimateConfidence.High, NetworkEstimateConfidence.Medium) &&
+            (network.estimatedThroughputBps ?: Long.MAX_VALUE) < 12_000_000L
         val exactPreferred = preferred != null && quality == preferred
         val qualityRank = when (quality) { "2160p" -> 5; "1080p" -> 4; "720p" -> 3; "480p" -> 2; else -> 0 }
         val seeds = option.seeds?.filter(Char::isDigit)?.toIntOrNull()
@@ -81,15 +104,24 @@ internal object TvSmartStreamSelector {
             }
             if (option.sourceKind == StreamSourceKind.Torrent) add("seeds-$bucket")
             if (quality == "unknown") add("quality-unknown")
+            add("compatibility-${compatibility.name.lowercase()}")
+            add("network-${networkFit.name.lowercase()}")
+            if (slowNetworkSizeTieBreak && size != null) add("slow-network-size")
         }
         return Scored(option, reasons = reasons, quality = quality, seedsBucket = bucket,
             qualityPref = if (exactPreferred) 1 else 0, qualityRank = qualityRank,
             effectiveQualityRank = effectiveQualityRank,
-            sourceRank = sourceRank, seedRank = seedRank, sizeRank = size ?: Long.MAX_VALUE)
+            sourceRank = sourceRank, seedRank = seedRank, sizeRank = size ?: Long.MAX_VALUE,
+            compatibility = compatibility, network = networkFit, metadata = metadata, slowNetworkSizeTieBreak = slowNetworkSizeTieBreak)
     }
 
     private fun compare(a: Scored, b: Scored): Int {
+        compareValues(compatibilityRank(a.compatibility), compatibilityRank(b.compatibility)).takeIf { it != 0 }?.let { return it }
+        compareValues(networkRank(a.network), networkRank(b.network)).takeIf { it != 0 }?.let { return it }
         compareValues(a.qualityPref, b.qualityPref).takeIf { it != 0 }?.let { return it }
+        if (a.slowNetworkSizeTieBreak && b.slowNetworkSizeTieBreak && a.quality == b.quality) {
+            compareValues(b.sizeRank, a.sizeRank).takeIf { it != 0 }?.let { return it }
+        }
         compareValues(a.effectiveQualityRank, b.effectiveQualityRank).takeIf { it != 0 }?.let { return it }
         compareValues(a.qualityRank, b.qualityRank).takeIf { it != 0 }?.let { return it }
         compareValues(a.sourceRank, b.sourceRank).takeIf { it != 0 }?.let { return it }
@@ -98,6 +130,9 @@ internal object TvSmartStreamSelector {
         // Semantic keys are stable identity; reverse comparison makes the winner independent of arrival order.
         return b.option.semanticKey.compareTo(a.option.semanticKey)
     }
+
+    private fun compatibilityRank(value: Compatibility) = when (value) { Compatibility.Compatible -> 2; Compatibility.Unknown -> 1; Compatibility.Incompatible -> 0 }
+    private fun networkRank(value: NetworkSustainability) = when (value) { NetworkSustainability.Comfortable -> 3; NetworkSustainability.Borderline -> 2; NetworkSustainability.Unknown -> 1; NetworkSustainability.Unsustainable -> 0 }
 
     private fun parseQuality(vararg values: String?): String {
         val text = values.filterNotNull().joinToString(" ").lowercase()

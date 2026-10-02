@@ -155,6 +155,94 @@ class TvSmartStreamSelectorTest {
         assertEquals("usable", TvSmartStreamSelector.select(listOf(option("usable", null))).selected?.semanticKey)
     }
 
+    @Test fun `preferred 2160p cannot exceed a 1080p display`() {
+        val device = DevicePlaybackCapabilities(maxDisplayWidth = 1920, maxDisplayHeight = 1080, supports2160pOutput = false)
+        val result = TvSmartStreamSelector.select(listOf(option("4k", "2160p", StreamSourceKind.Direct), option("1080", "1080p", StreamSourceKind.Direct)), "2160p", device)
+        assertEquals("1080", result.selected?.semanticKey)
+        assertEquals(1, result.ranked.size)
+    }
+
+    @Test fun `preferred 2160p wins on a 4k display with a verified decoder`() {
+        val supported = VideoDecoderCapability(CapabilitySupport.Supported, CapabilitySupport.Supported, CapabilitySupport.Supported)
+        val device = DevicePlaybackCapabilities(supports2160pOutput = true, avc = supported)
+        val result = TvSmartStreamSelector.select(listOf(
+            option("1080", "1080p", StreamSourceKind.Direct).copy(name = "1080p AVC"),
+            option("4k", "2160p", StreamSourceKind.Direct).copy(name = "2160p AVC"),
+        ), "2160p", device)
+        assertEquals("4k", result.selected?.semanticKey)
+        assertEquals(Compatibility.Compatible, result.ranked.first().compatibility)
+    }
+
+    @Test fun `physical supported modes can establish 4k despite current 1080 mode`() {
+        val (current, max) = physicalDisplaySnapshotForModes(intArrayOf(1920, 1080), listOf(intArrayOf(1920, 1080), intArrayOf(3840, 2160)))
+        assertEquals("1920x1080", "${current?.get(0)}x${current?.get(1)}")
+        assertEquals("3840x2160", "${max?.get(0)}x${max?.get(1)}")
+    }
+
+    @Test fun `known unsupported codec loses to supported codec despite preferred quality`() {
+        val unsupported = VideoDecoderCapability(CapabilitySupport.Unsupported, CapabilitySupport.Unsupported, CapabilitySupport.Unsupported)
+        val supported = VideoDecoderCapability(CapabilitySupport.Supported, CapabilitySupport.Supported, CapabilitySupport.Supported)
+        val device = DevicePlaybackCapabilities(supports2160pOutput = true, hevc = unsupported, avc = supported)
+        val hevc = option("hevc", "2160p", StreamSourceKind.Direct).copy(name = "2160p HEVC")
+        val avc = option("avc", "2160p", StreamSourceKind.Direct).copy(name = "2160p AVC")
+        assertEquals("avc", TvSmartStreamSelector.select(listOf(hevc, avc), "2160p", device).selected?.semanticKey)
+    }
+
+    @Test fun `unknown codec metadata stays eligible`() {
+        val unsupported = VideoDecoderCapability(CapabilitySupport.Unsupported, CapabilitySupport.Unsupported, CapabilitySupport.Unsupported)
+        val result = TvSmartStreamSelector.select(listOf(option("unknown", "2160p").copy(name = "2160p release")), device = DevicePlaybackCapabilities(supports2160pOutput = true, avc = unsupported))
+        assertEquals("unknown", result.selected?.semanticKey)
+        assertTrue(result.ranked.single().compatibility != Compatibility.Incompatible)
+    }
+
+    @Test fun `HDR capability is a conservative compatibility signal`() {
+        val dv = option("dv", "2160p").copy(name = "2160p Dolby Vision AVC")
+        val avc = VideoDecoderCapability(CapabilitySupport.Supported, CapabilitySupport.Supported, CapabilitySupport.Supported)
+        val device = DevicePlaybackCapabilities(supports2160pOutput = true, avc = avc, dolbyVision = CapabilitySupport.Unsupported)
+        assertEquals(Compatibility.Incompatible, compatibility(parseStreamVideoMetadata(dv), device))
+        assertEquals(Compatibility.Compatible, compatibility(parseStreamVideoMetadata(dv), device.copy(dolbyVision = CapabilitySupport.Supported)))
+    }
+
+    @Test fun `measured network estimate outranks low confidence Android link estimate`() {
+        val measured = NetworkPlaybackProfile(estimatedThroughputBps = 20_000_000, estimateSource = NetworkEstimateSource.Media3Measured, confidence = NetworkEstimateConfidence.High)
+        val android = measured.copy(estimatedThroughputBps = 80_000_000, estimateSource = NetworkEstimateSource.AndroidLinkEstimate, confidence = NetworkEstimateConfidence.Low)
+        val streams = listOf(option("1080", "1080p").copy(videoSize = 100_000_000), option("4k", "2160p").copy(videoSize = 200_000_000))
+        val result = TvSmartStreamSelector.select(streams, "2160p", device = DevicePlaybackCapabilities(), network = measured, durationSeconds = 100)
+        val linkResult = TvSmartStreamSelector.select(streams, "2160p", device = DevicePlaybackCapabilities(), network = android, durationSeconds = 100)
+        assertEquals("1080", result.selected?.semanticKey)
+        assertEquals("4k", linkResult.selected?.semanticKey)
+        assertEquals(NetworkEstimateSource.Media3Measured, measured.estimateSource)
+        assertEquals(NetworkEstimateSource.AndroidLinkEstimate, android.estimateSource)
+    }
+
+    @Test fun `network headroom classifies comfortable borderline and unsustainable`() {
+        val profile = NetworkPlaybackProfile(estimatedThroughputBps = 100_000_000, estimateSource = NetworkEstimateSource.Media3Measured)
+        assertEquals(NetworkSustainability.Comfortable, networkSustainability(50_000_000, profile))
+        assertEquals(NetworkSustainability.Borderline, networkSustainability(70_000_000, profile))
+        assertEquals(NetworkSustainability.Unsustainable, networkSustainability(90_000_000, profile))
+        assertEquals(NetworkSustainability.Unknown, networkSustainability(null, profile.copy(estimatedThroughputBps = null)))
+    }
+
+    @Test fun `local server URLs are excluded from passive internet measurements`() {
+        assertEquals(false, isRemoteNetworkUri("http://127.0.0.1:11470/stream"))
+        assertEquals(false, isRemoteNetworkUri("http://localhost:8080/video"))
+        assertEquals(true, isRemoteNetworkUri("https://cdn.example/video"))
+        assertEquals(NetworkEstimateConfidence.High, measuredConfidence(30_000))
+        assertEquals(NetworkEstimateConfidence.Medium, measuredConfidence(10 * 60 * 1000L))
+        assertEquals(NetworkEstimateConfidence.Unknown, measuredConfidence(25 * 60 * 60 * 1000L))
+    }
+
+    @Test fun `known lower bitrate wins a slow network choice while unknown network keeps quality preference`() {
+        val network = NetworkPlaybackProfile(estimatedThroughputBps = 35_000_000, estimateSource = NetworkEstimateSource.Media3Measured, confidence = NetworkEstimateConfidence.High)
+        val expensive4k = option("remux", "2160p", StreamSourceKind.Direct).copy(name = "2160p HEVC REMUX", videoSize = 2_000_000_000)
+        val affordable4k = option("web", "2160p", StreamSourceKind.Direct).copy(name = "2160p HEVC WEB-DL", videoSize = 100_000_000)
+        val lower = option("1080", "1080p", StreamSourceKind.Direct).copy(videoSize = 200_000_000)
+        val slow = TvSmartStreamSelector.select(listOf(expensive4k, affordable4k, lower), "2160p", network = network, durationSeconds = 60)
+        assertEquals("web", slow.selected?.semanticKey)
+        val unknown = TvSmartStreamSelector.select(listOf(option("1080", "1080p"), option("4k", "2160p")), "2160p")
+        assertEquals("4k", unknown.selected?.semanticKey)
+    }
+
     private fun option(key: String, quality: String?, kind: StreamSourceKind = StreamSourceKind.Other, seeds: String? = null,
                        size: String? = null, provider: String = "Provider") = StreamOption(
         key = key, semanticKey = key, name = "${quality.orEmpty()} stream", description = null, addonTitle = provider,

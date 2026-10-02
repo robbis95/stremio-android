@@ -552,6 +552,13 @@ External/community segment-provider evaluation and implementation are parked.
 - Startup failures advance automatically through the existing `startTvPlayback` path; manual source selection and failures after first visual retain normal Error behavior.
 - DEBUG fixture deterministically fails A (container), fails B (source), then loads C through the ordinary player path.
 
+#### Smart Play V1.2 — device/network awareness — implemented
+- Android display modes, display HDR capabilities, and MediaCodec video capabilities are collected into a pure immutable device snapshot; `hardwareDecoding=false` leaves codec support unknown rather than assuming hardware decoding.
+- Smart candidates are parsed for resolution, codec, HDR, and release tokens. Verified output/decoder/HDR incompatibilities rank below eligible candidates and are excluded from Smart Play; manual Choose Source retains the full source list.
+- Network selection uses passive Media3 HTTP transfer measurements with bounded local EWMA history and age-based confidence. Localhost/loopback HTTP transfers are filtered before entering the shared meter/history. Android downstream link bandwidth is a low-confidence fallback only; Torrent download speed is not stored as internet throughput.
+- File-size bitrate estimates are used only with an available target runtime and include a 1.4× average-bitrate safety factor. Unknown duration or network keeps candidates eligible. Device/network state is captured before Smart Play ranking and the existing fallback session keeps its fixed ranked candidate snapshot.
+- Validation: Android unit suite passed (262 tests); debug compile/APK and release compile/APK passed; `git diff --check` passed. On the Philips TPM171E (Android 8/API 26), the collector reported physical current/max mode 1920×1080, 2160p output unsupported, AVC/HEVC/VP9 4K support, AV1 4K unsupported, and HDR10/HLG supported with HDR10+/Dolby Vision unsupported. One Silo S1E4 Smart Play ranked six real sources, chose 1080p Direct, and reached the normal committed first-visual path. Passive remote playback updated local measured-throughput history from a prior ~4 Mbps estimate to ~7.7 Mbps. The Android link estimate was not exposed by this device's diagnostic snapshot. Localhost/loopback exclusion is covered by unit tests; no Torrent playback was needed to verify its URI filter.
+
 ### PE6 — Episode Continuity + language intent
 - Core binge match first
 - local similarity fallback

@@ -79,6 +79,9 @@ import com.stremio.mobile.presentation.tv.nextEpisodeTarget
 import com.stremio.mobile.presentation.tv.preferredNextEpisodeOption
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
 import com.stremio.mobile.presentation.tv.TvSmartStreamSelector
+import com.stremio.mobile.presentation.tv.AndroidPlaybackCapabilities
+import com.stremio.mobile.presentation.tv.NetworkPlaybackHistory
+import com.stremio.mobile.presentation.tv.networkSnapshot
 import com.stremio.mobile.presentation.tv.tvSmartResultApplies
 import com.stremio.mobile.presentation.tv.tvSmartShouldFinish
 import com.stremio.mobile.presentation.tv.TvValidationFixtures
@@ -148,6 +151,8 @@ class MainViewModel internal constructor(
 ) : ViewModel() {
     private val tvNextVideoProvider = tvNextVideoProvider ?: CoreTvNextVideoProvider { playbackRepository.getNextVideo() }
     private val appContext = appContext.applicationContext
+    private val playbackNetworkHistory = NetworkPlaybackHistory(this.appContext)
+    private val tvDeviceCapabilitySnapshots = mutableMapOf<Boolean, com.stremio.mobile.presentation.tv.DevicePlaybackCapabilities>()
     private val latestIntentUri = MutableStateFlow<String?>(null)
     private val account = MutableStateFlow(authRepository.accountFromCore())
     val tvAccount: StateFlow<AccountUiState> = account.asStateFlow()
@@ -2159,11 +2164,25 @@ class MainViewModel internal constructor(
             tvStreamsJob?.cancel()
             tvStreamsJob = null
         }
-        val result = TvSmartStreamSelector.select(state.options, preferredQuality.value)
+        val hardwareDecoding = profileSettings.value?.hardwareDecoding ?: true
+        val deviceCaps = tvDeviceCapabilitySnapshots.getOrPut(hardwareDecoding) {
+            AndroidPlaybackCapabilities.collect(appContext, hardwareDecoding)
+        }
+        val networkProfile = networkSnapshot(appContext, playbackNetworkHistory)
+        val result = TvSmartStreamSelector.select(state.options, preferredQuality.value, deviceCaps, networkProfile,
+            selectedDetails.value?.runtime?.let(::runtimeSeconds))
         if (BuildConfig.DEBUG) {
+            Timber.tag("TvPlaybackCaps").d("displayCurrent=%s displayMax=%s supports2160p=%s avc4k=%s hevc4k=%s av1_4k=%s vp9_4k=%s hdr10=%s hdr10Plus=%s dolbyVision=%s hlg=%s",
+                displaySize(deviceCaps.currentDisplayWidth, deviceCaps.currentDisplayHeight), displaySize(deviceCaps.maxDisplayWidth, deviceCaps.maxDisplayHeight), deviceCaps.supports2160pOutput,
+                deviceCaps.avc.supports2160p, deviceCaps.hevc.supports2160p, deviceCaps.av1.supports2160p, deviceCaps.vp9.supports2160p,
+                deviceCaps.hdr10, deviceCaps.hdr10Plus, deviceCaps.dolbyVision, deviceCaps.hlg)
+            val age = networkProfile.measuredAtMs?.let { (android.os.SystemClock.elapsedRealtime() - it).coerceAtLeast(0) }
+            Timber.tag("TvNetworkProfile").d("transport=%s estimateMbps=%s source=%s confidence=%s ageMs=%s",
+                networkProfile.transport.name.lowercase(), networkProfile.estimatedThroughputBps?.div(1_000_000) ?: "unknown",
+                networkProfile.estimateSource.name.lowercase(), networkProfile.confidence.name.lowercase(), age ?: "unknown")
             Timber.tag("TvSmartPlay").d("targetType=%s episode=%s trigger=%s candidates=%d", target.contentType, if (target.videoId == null) "no" else "yes", trigger, result.ranked.size)
             result.ranked.take(3).forEach { candidate ->
-                Timber.tag("TvSmartPlay").d("rank=%d quality=%s source=%s seeds=%s reasons=%s", candidate.rank, candidate.quality, candidate.option.sourceKind.name.lowercase(), candidate.seedsBucket, candidate.reasons.joinToString(","))
+                Timber.tag("TvSmartPlay").d("rank=%d quality=%s codec=%s compatibility=%s network=%s source=%s seeds=%s reasons=%s", candidate.rank, candidate.quality, candidate.codec.name.lowercase(), candidate.compatibility.name.lowercase(), candidate.network.name.lowercase(), candidate.option.sourceKind.name.lowercase(), candidate.seedsBucket, candidate.reasons.joinToString(","))
             }
             Timber.tag("TvSmartPlay").d("selectedRank=%s reason=%s", result.ranked.firstOrNull()?.rank ?: "none", result.reason ?: "none")
         }
@@ -2174,6 +2193,12 @@ class MainViewModel internal constructor(
                 selectedStreamKey = result.selected.semanticKey, isLoading = false)
             startTvPlayback(target, result.selected, smartSessionIndex = 0)
         } else _tvStreamSelection.value = state.copy(smartSelecting = false, isLoading = false)
+    }
+
+    private fun displaySize(width: Int?, height: Int?) = if (width == null || height == null) "unknown" else "${width}x$height"
+    private fun runtimeSeconds(runtime: String): Long? {
+        val parts = runtime.trim().split(":").mapNotNull(String::toLongOrNull)
+        return when (parts.size) { 1 -> parts[0] * 60; 2 -> parts[0] * 60 + parts[1]; 3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]; else -> null }
     }
 
     internal fun playTvSmartValidationFixture() {

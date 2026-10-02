@@ -55,6 +55,7 @@ class ExoStreamPlayer(
             .setConnectTimeoutMs(30_000)
             .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
+            .setTransferListener(PlaybackBandwidth.transferListener(appContext))
         val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
             .setDataSourceFactory(dataSourceFactory)
@@ -107,6 +108,7 @@ class ExoStreamPlayer(
         ExoPlayer.Builder(appContext)
             .setMediaSourceFactory(mediaSourceFactory)
             .setRenderersFactory(renderersFactory)
+            .setBandwidthMeter(PlaybackBandwidth.meter(appContext))
             .build()
     }
 

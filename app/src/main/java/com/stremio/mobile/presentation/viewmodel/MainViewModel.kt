@@ -67,6 +67,11 @@ import com.stremio.mobile.presentation.tv.tvNextEpisodePromptVisible
 import com.stremio.mobile.presentation.tv.tvNextEpisodeDismiss
 import com.stremio.mobile.presentation.tv.tvNextEpisodeTransitionStarted
 import com.stremio.mobile.presentation.tv.tvShouldAutoAdvanceEnded
+import com.stremio.mobile.presentation.tv.tvSegmentsForAttempt
+import com.stremio.mobile.presentation.tv.segments.CoreTvSegmentProvider
+import com.stremio.mobile.presentation.tv.segments.TvSegmentCoordinator
+import com.stremio.mobile.presentation.tv.segments.TvSegmentQuery
+import com.stremio.mobile.presentation.tv.segments.tvSegmentQuery
 import com.stremio.mobile.presentation.tv.nextEpisodeTarget
 import com.stremio.mobile.presentation.tv.preferredNextEpisodeOption
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
@@ -165,8 +170,9 @@ class MainViewModel internal constructor(
     private var tvPlaybackJob: Job? = null
     private var tvReusePendingAttemptId: String? = null
     private var tvPlaybackMonitorJob: Job? = null
-    private var tvSkipSegmentsJob: Job? = null
+    private var tvSegmentProviderJob: Job? = null
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
+    private val tvSegmentCoordinator = TvSegmentCoordinator()
     private var tvStreamsJob: Job? = null
     private var tvNextEpisodeJob: Job? = null
     private val tvNextEpisodePrefetch = TvStreamPrefetchCache()
@@ -2137,7 +2143,7 @@ class MainViewModel internal constructor(
         cancelTvNextEpisodePrefetch("attempt-changed")
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
-        tvSkipSegmentsJob?.cancel()
+        tvSegmentProviderJob?.cancel()
         latestTvCorePlayer = null
         val heldExoForReuse = reuseExistingExo && playbackRepository.getPlayer()?.engine == PlayerEngine.EXO
         if (heldExoForReuse) {
@@ -2389,15 +2395,14 @@ class MainViewModel internal constructor(
     private fun startTvPlaybackMonitor(attempt: TvPlaybackAttempt) {
         tvPlaybackMonitorJob?.cancel()
         val player = playbackRepository.getPlayer() ?: return
-        tvSkipSegmentsJob?.cancel()
-        tvSkipSegmentsJob = viewModelScope.launch {
+        tvSegmentProviderJob?.cancel()
+        tvSegmentProviderJob = viewModelScope.launch {
             playbackRepository.playerFlow().collect { corePlayer ->
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
                 latestTvCorePlayer = corePlayer
                 val current = _tvPlayback.value
-                _tvPlayback.value = current.copy(
-                    skipSegments = playbackRepository.tvSkipSegments(corePlayer, current.runtime.durationMs),
-                )
+                val query = current.option?.let { tvSegmentQuery(attempt, it, current.runtime.durationMs) }
+                if (query != null) publishTvSegments(attempt, query, corePlayer)
             }
         }
         tvPlaybackMonitorJob = viewModelScope.launch {
@@ -2407,8 +2412,6 @@ class MainViewModel internal constructor(
                 val current = _tvPlayback.value
                 val updated = current.copy(
                     runtime = runtime,
-                    skipSegments = latestTvCorePlayer?.let { playbackRepository.tvSkipSegments(it, runtime.durationMs) }
-                        ?: current.skipSegments,
                     isBuffering = runtime.isBuffering,
                     error = if (runtime.error != null && !current.firstVisualObserved) "Couldn’t start this source" else current.error,
                     stage = when {
@@ -2429,6 +2432,8 @@ class MainViewModel internal constructor(
                     ),
                 )
                 _tvPlayback.value = updated
+                val query = updated.option?.let { tvSegmentQuery(attempt, it, runtime.durationMs) }
+                if (query != null) latestTvCorePlayer?.let { publishTvSegments(attempt, query, it) }
                 maybePrefetchTvNextEpisode(attempt, updated)
                 val fallbackNotice = current.requestedEngine != current.actualEngine &&
                     runtime.error == "MPV unavailable; using ExoPlayer."
@@ -2452,6 +2457,25 @@ class MainViewModel internal constructor(
                     lastTvTimeReportNanos = SystemClock.elapsedRealtimeNanos()
                     playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
                 }
+            }
+        }
+    }
+
+    private fun publishTvSegments(
+        attempt: TvPlaybackAttempt,
+        query: TvSegmentQuery,
+        corePlayer: com.stremio.core.models.Player,
+    ) {
+        if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        val result = tvSegmentCoordinator.resolve(query, listOf(CoreTvSegmentProvider(corePlayer)))
+        if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        _tvPlayback.value = tvSegmentsForAttempt(_tvPlayback.value, attempt.attemptId, result.segments)
+        if (BuildConfig.DEBUG) {
+            Log.d("TvSegments", "attempt=${attempt.attemptId} provider=core candidateCount=${result.candidateCount} " +
+                "resolvedCount=${result.segments.size} cache=${if (result.cacheHit) "hit" else "miss"} reason=${result.resolutionReason}")
+            result.segments.forEach { segment ->
+                Log.d("TvSegments", "attempt=${attempt.attemptId} provider=core type=${segment.type.name.lowercase()} " +
+                    "startMs=${segment.startMs} endMs=${segment.endMs} confidence=${segment.confidence.name.lowercase()}")
             }
         }
     }
@@ -2810,8 +2834,8 @@ class MainViewModel internal constructor(
         tvPlaybackJob = null
         tvPlaybackMonitorJob?.cancel()
         tvPlaybackMonitorJob = null
-        tvSkipSegmentsJob?.cancel()
-        tvSkipSegmentsJob = null
+        tvSegmentProviderJob?.cancel()
+        tvSegmentProviderJob = null
         latestTvCorePlayer = null
         tvNextVideoAttemptId = null
         tvNextVideo = null

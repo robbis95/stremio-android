@@ -32,8 +32,6 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.stremio.mobile.data.model.StreamSourceKind
-import com.stremio.mobile.data.model.TvSkipSegment
-import com.stremio.mobile.data.model.TvSkipSegments
 import com.stremio.mobile.player.PlaybackManager
 import com.stremio.mobile.player.Player
 import com.stremio.mobile.player.PlayerEngine
@@ -44,6 +42,12 @@ import com.stremio.mobile.player.PlayerTrackType
 import com.stremio.mobile.player.PlayerSubtitleStyle
 import com.stremio.mobile.presentation.tv.theme.TvColors
 import com.stremio.mobile.presentation.tv.theme.TvTheme
+import com.stremio.mobile.presentation.tv.segments.TvSegmentCandidate
+import com.stremio.mobile.presentation.tv.segments.TvSegmentConfidence
+import com.stremio.mobile.presentation.tv.segments.TvSegmentCoordinator
+import com.stremio.mobile.presentation.tv.segments.TvSegmentProvider
+import com.stremio.mobile.presentation.tv.segments.TvSegmentQuery
+import com.stremio.mobile.presentation.tv.segments.TvSegmentType
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,10 +58,9 @@ private const val SAMPLE_HLS_URL = "https://test-streams.mux.dev/x36xhzz/x36xhzz
 private const val REUSE_ITEM_A_URL = SAMPLE_MP4_URL
 private const val REUSE_ITEM_B_URL = SAMPLE_HLS_URL
 private const val LOCAL_MAC_URL = "http://10.0.2.2:8080/sample.mp4"
-private val SIM_SKIP_SEGMENTS = TvSkipSegments(
-    intro = TvSkipSegment(startMs = 90_000L, endMs = 150_000L),
-    outroStartMs = 27 * 60 * 1000L,
-)
+private const val SIM_INTRO_START_MS = 90_000L
+private const val SIM_INTRO_END_MS = 150_000L
+private const val SIM_CREDITS_START_MS = 27 * 60 * 1000L
 private val SIM_AUDIO_TRACKS = listOf(
     PlayerTrackOption("lab-audio-en", PlayerTrackType.AUDIO, "English", "English", selected = true, languageCode = "eng"),
     PlayerTrackOption("lab-audio-sv", PlayerTrackType.AUDIO, "Swedish", "Swedish", selected = false, languageCode = "swe"),
@@ -122,7 +125,7 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
         preset = next
         val presetPosition = when (next) {
             SimPreset.IntroActive -> 100_000L
-            SimPreset.OutroActive -> (SIM_SKIP_SEGMENTS.outroStartMs ?: 27 * 60 * 1000L) + 30_000L
+            SimPreset.OutroActive -> SIM_CREDITS_START_MS + 30_000L
             SimPreset.NextOutsideWindow -> 120_000L
             SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed -> (durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS) - 10_000L
             SimPreset.EndedWithNext, SimPreset.EndedWithoutNext -> durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS
@@ -456,7 +459,7 @@ internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, buf
         firstVisualObserved = firstVisual,
         isBuffering = buffering,
         runtime = runtime,
-        skipSegments = SIM_SKIP_SEGMENTS.takeIf { durationMs >= 27 * 60 * 1000L } ?: TvSkipSegments(),
+        resolvedSegments = debugLabSegments(durationMs),
         nextEpisode = TvNextEpisodeState(
             videoId = "lab-s01e07".takeIf { hasNext },
             episodeLabel = "S01E07".takeIf { hasNext },
@@ -466,3 +469,13 @@ internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, buf
         ),
     )
 }
+
+private fun debugLabSegments(durationMs: Long) = TvSegmentCoordinator(
+    providers = listOf(object : TvSegmentProvider {
+        override val id = "debug-fixture"
+        override fun load(query: TvSegmentQuery): List<TvSegmentCandidate> = if (query.durationMs < SIM_CREDITS_START_MS + 1L) emptyList() else listOf(
+            TvSegmentCandidate(TvSegmentType.Intro, SIM_INTRO_START_MS, SIM_INTRO_END_MS, id, TvSegmentConfidence.High),
+            TvSegmentCandidate(TvSegmentType.Credits, SIM_CREDITS_START_MS, query.durationMs, id, TvSegmentConfidence.High),
+        )
+    }),
+).resolve(TvSegmentQuery("debug", "playback-lab", "fixture", null, null, durationMs, "debug", "explicit-lab-fixture")).segments

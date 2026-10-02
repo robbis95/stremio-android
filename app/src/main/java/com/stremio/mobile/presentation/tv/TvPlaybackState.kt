@@ -2,7 +2,7 @@ package com.stremio.mobile.presentation.tv
 
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.data.model.StreamSourceKind
-import com.stremio.mobile.data.model.TvSkipSegments
+import com.stremio.mobile.presentation.tv.segments.TvResolvedSegment
 import com.stremio.mobile.player.PlayerEngine
 import java.util.UUID
 
@@ -111,7 +111,7 @@ internal data class TvPlaybackUiState(
     val firstVisualObserved: Boolean = false,
     val isBuffering: Boolean = false,
     val runtime: com.stremio.mobile.player.PlayerRuntimeState = com.stremio.mobile.player.PlayerRuntimeState(),
-    val skipSegments: TvSkipSegments = TvSkipSegments(),
+    val resolvedSegments: List<TvResolvedSegment> = emptyList(),
     val nextEpisode: TvNextEpisodeState = TvNextEpisodeState(),
 ) {
     val isResolvingOrPreparing: Boolean get() = stage == TvPlaybackStage.Resolving || stage == TvPlaybackStage.Preparing
@@ -120,6 +120,13 @@ internal data class TvPlaybackUiState(
 
 internal fun isCurrentTvAttempt(state: TvPlaybackUiState, attemptId: String): Boolean =
     state.attempt?.attemptId == attemptId
+
+internal fun tvSegmentsForAttempt(
+    state: TvPlaybackUiState,
+    attemptId: String,
+    segments: List<TvResolvedSegment>,
+): TvPlaybackUiState =
+    if (isCurrentTvAttempt(state, attemptId)) state.copy(resolvedSegments = segments) else state
 
 internal fun shouldReleaseRetainedPlayerAfterTvFailure(retainedAttemptId: String?, failedAttemptId: String): Boolean =
     retainedAttemptId != null && retainedAttemptId == failedAttemptId

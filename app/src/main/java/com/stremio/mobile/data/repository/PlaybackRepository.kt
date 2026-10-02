@@ -8,8 +8,6 @@ import com.stremio.mobile.core.PlaybackResolutionFailure
 import com.stremio.mobile.core.ResolvedPlayableSource
 import com.stremio.mobile.core.coreResolutionTimeoutFailure
 import com.stremio.mobile.data.model.StreamOption
-import com.stremio.mobile.data.model.TvSkipSegments
-import com.stremio.mobile.data.model.normalizeTvSkipSegments
 import com.stremio.mobile.player.ExternalSubtitle
 import com.stremio.mobile.player.LanguageCatalog
 import com.stremio.mobile.player.PlaybackManager
@@ -112,17 +110,6 @@ class PlaybackRepository(
     }
 
     fun playerFlow(): Flow<com.stremio.core.models.Player> = core.playerFlow()
-
-    internal fun tvSkipSegments(player: com.stremio.core.models.Player, playbackDurationMs: Long): TvSkipSegments {
-        val introOutro = player.introOutro
-        return normalizeTvSkipSegments(
-            introFromMs = introOutro?.intro?.from,
-            introToMs = introOutro?.intro?.to,
-            introSourceDurationMs = introOutro?.intro?.duration,
-            outroStartMs = introOutro?.outro,
-            playbackDurationMs = playbackDurationMs,
-        )
-    }
 
     fun extractAddonSubtitles(player: com.stremio.core.models.Player): List<ExternalSubtitle> {
         return player.subtitles.flatMap { loadable ->

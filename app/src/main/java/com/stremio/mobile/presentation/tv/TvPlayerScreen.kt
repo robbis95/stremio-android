@@ -74,8 +74,9 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.activity.compose.BackHandler
 import com.stremio.mobile.player.PlayerTrackOption
-import com.stremio.mobile.data.model.tvIntroSkipTarget
-import com.stremio.mobile.data.model.tvOutroSkipTarget
+import com.stremio.mobile.presentation.tv.segments.TvContextualPlaybackAction
+import com.stremio.mobile.presentation.tv.segments.TvSegmentType
+import com.stremio.mobile.presentation.tv.segments.tvContextualPlaybackAction
 import com.stremio.mobile.player.Player
 import com.stremio.mobile.player.PlayerSubtitleStyle
 import com.stremio.mobile.presentation.tv.theme.TvColors
@@ -352,8 +353,19 @@ private fun TvPlayerControls(
     onSeek: (Long) -> Unit,
     onSeekTo: (Long) -> Unit,
 ) {
-    val introTarget = tvIntroSkipTarget(state.skipSegments, state.runtime.positionMs)
-    val outroTarget = tvOutroSkipTarget(state.skipSegments, state.runtime.positionMs, state.runtime.durationMs)
+    val action = tvContextualPlaybackAction(
+        segments = state.resolvedSegments,
+        positionMs = state.runtime.positionMs,
+        nextEpisodeActionable = state.nextEpisode.available && state.nextEpisode.promptVisible &&
+            state.nextEpisode.transition == TvNextEpisodeTransition.Idle,
+    )
+    val skipSegment = (action as? TvContextualPlaybackAction.SkipSegment)?.segment
+    val skipTarget = skipSegment?.let { segment ->
+        when (segment.type) {
+            TvSegmentType.Intro, TvSegmentType.Recap, TvSegmentType.Preview -> segment.endMs
+            TvSegmentType.Credits -> state.runtime.durationMs
+        }
+    }
     val title = state.attempt?.target?.contentName.orEmpty().ifBlank { "Now playing" }
     val episodeLabel = state.attempt?.target?.episodeLabel
     Column(
@@ -362,23 +374,26 @@ private fun TvPlayerControls(
             .padding(start = 72.dp, end = 72.dp, top = 72.dp, bottom = 46.dp),
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
-        if (introTarget != null || outroTarget != null) {
+        if (skipSegment != null && skipTarget != null) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
-                if (introTarget != null) {
+                if (skipSegment.type == TvSegmentType.Intro || skipSegment.type == TvSegmentType.Recap || skipSegment.type == TvSegmentType.Preview) {
                     ContextSkipAction(
-                        text = "Skip Intro", icon = Icons.Outlined.SkipNext,
+                        text = when (skipSegment.type) {
+                            TvSegmentType.Intro -> "Skip Intro"
+                            TvSegmentType.Recap -> "Skip Recap"
+                            TvSegmentType.Preview -> "Skip Preview"
+                            TvSegmentType.Credits -> "Skip Outro"
+                        }, icon = Icons.Outlined.SkipNext,
                         requester = skipIntroRequester, focused = lastFocusedControl == TvPlayerControl.SkipIntro,
                         onFocus = { onFocused(TvPlayerControl.SkipIntro) }, onActivity = onActivity,
-                        onClick = { onSeekTo(introTarget) },
+                        onClick = { onSeekTo(skipTarget) },
                     )
-                }
-                if (introTarget != null && outroTarget != null) Spacer(Modifier.width(14.dp))
-                if (outroTarget != null) {
+                } else {
                     ContextSkipAction(
                         text = "Skip Outro", icon = Icons.Outlined.SkipNext,
                         requester = skipOutroRequester, focused = lastFocusedControl == TvPlayerControl.SkipOutro,
                         onFocus = { onFocused(TvPlayerControl.SkipOutro) }, onActivity = onActivity,
-                        onClick = { onSeekTo(outroTarget) },
+                        onClick = { onSeekTo(skipTarget) },
                     )
                 }
             }

@@ -49,17 +49,19 @@ class TvPlaybackLabStateTest {
         assertEquals(600_000L, ended.runtime.positionMs)
         assertTrue(intro.runtime.isPlaying)
         assertTrue(outro.runtime.isPlaying)
-        assertEquals(90_000L, intro.skipSegments.intro?.startMs)
-        assertEquals(1_620_000L, outro.skipSegments.outroStartMs)
+        assertEquals(90_000L, intro.resolvedSegments.firstOrNull { it.type == com.stremio.mobile.presentation.tv.segments.TvSegmentType.Intro }?.startMs)
+        assertEquals(1_620_000L, outro.resolvedSegments.firstOrNull { it.type == com.stremio.mobile.presentation.tv.segments.TvSegmentType.Credits }?.startMs)
     }
 
     @Test
     fun simulatedSkipSegmentsAreAvailableForAPlayableDuration() {
         val state = labState(SimPreset.Playing, 100_000L, 1_800_000L, 300_000L)
 
-        assertEquals(90_000L, state.skipSegments.intro?.startMs)
-        assertEquals(150_000L, state.skipSegments.intro?.endMs)
-        assertEquals(1_620_000L, state.skipSegments.outroStartMs)
+        val intro = state.resolvedSegments.first { it.type == com.stremio.mobile.presentation.tv.segments.TvSegmentType.Intro }
+        val credits = state.resolvedSegments.first { it.type == com.stremio.mobile.presentation.tv.segments.TvSegmentType.Credits }
+        assertEquals(90_000L, intro.startMs)
+        assertEquals(150_000L, intro.endMs)
+        assertEquals(1_620_000L, credits.startMs)
         assertEquals(100_000L, state.runtime.positionMs)
         assertEquals(300_000L, state.runtime.bufferedPositionMs)
     }

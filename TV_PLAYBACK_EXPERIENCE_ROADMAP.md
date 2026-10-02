@@ -527,6 +527,14 @@ The evidence does not support a 37.1.11-only emulator regression: the same host-
 - confidence/evidence diagnostics
 - recap/intro/credits/preview model
 
+#### PE2 implementation — 2026-10-02
+
+Implemented a provider-neutral query, candidate, resolved-segment, provider, resolver, bounded in-memory LRU cache, and coordinator. Core is the only production provider: Core Intro boundaries retain Core's matched-source alignment without Android scaling; Core Outro maps to Credits ending at the active playback duration. Only high-confidence, bounded candidates become actions, and unsafe cross-type overlaps are dropped. The player consumes resolved segments and an attempt-scoped contextual-action policy; manual activation continues through the existing ViewModel seek/report path. Segment state resets with each attempt and late publication is guarded by attempt ID, including when Exo is reused.
+
+The DEBUG Playback Lab's explicit simulated-state presets use a deterministic fixture through the same coordinator and resolver. It is absent from Release sources. The cache is bounded to 64 entries and keyed by content/video identity, exact duration, stream kind/semantic identity, optional file/hash/size fingerprint, and provider identity; no playback URLs, auth, or session values are stored. Debug diagnostics contain only attempt ID, provider, counts, normalized boundaries, confidence, and cache status.
+
+Validation: `:app:compileDebugKotlin :app:testDebugUnitTest` passed (219 tests, 0 failures); `:app:compileReleaseKotlin :app:assembleRelease` passed; `git diff --check` is recorded with the change. No physical Android TV/Google TV device was connected for PE2 runtime validation. The DEBUG fixture is covered by the debug unit suite; real Core segment availability and on-device skip/arbitration behavior remain unobserved for this PE2 change. External/community providers and auto-skip remain unimplemented.
+
 ### PE3 — External segment provider evaluation
 - verify candidate services
 - implement one provider behind the neutral interface

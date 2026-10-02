@@ -127,6 +127,30 @@ class TvValidationFixtures(
         )
     }
 
+    /** Four synthetic candidates for exercising Smart Play through the production selector and attempt path. */
+    internal fun smartPlayOptions(target: TvStreamTarget): List<StreamOption>? {
+        if (!BuildConfig.DEBUG) return null
+        val request = ResourceRequest("debug-tv-smart", ResourcePath("stream", target.contentType, target.videoId ?: target.contentId))
+        fun candidate(key: String, quality: String, kind: StreamSourceKind, seeds: String? = null) = StreamOption(
+            key = "tv-smart-$key", semanticKey = "tv-smart-$key", name = "DEBUG $quality ${kind.name}",
+            description = null, addonTitle = "DEBUG fixture", quality = quality, seeds = seeds,
+            core = CoreStream(
+                Stream(name = "DEBUG $quality", source = if (kind == StreamSourceKind.Torrent) {
+                    Stream.Source.Tramvai(Stream.Tramvai("debug-smart-$key", 0))
+                } else Stream.Source.Url(Stream.Url("https://example.invalid/$key")),
+                    behaviorHints = com.stremio.core.types.resource.StreamBehaviorHints(false),
+                    deepLinks = com.stremio.core.types.resource.StreamDeepLinks(player = "", externalPlayer = com.stremio.core.types.resource.StreamDeepLinks.ExternalPlayerLink())),
+                request, null, "DEBUG fixture"),
+            sourceKind = kind,
+        )
+        return listOf(
+            candidate("a", "720p", StreamSourceKind.Direct),
+            candidate("b", "1080p", StreamSourceKind.Torrent, "150"),
+            candidate("c", "1080p", StreamSourceKind.Direct),
+            candidate("d", "2160p", StreamSourceKind.Torrent, "2"),
+        )
+    }
+
     /** Null means this target is outside fixture mode; a handled result with null video means C is terminal. */
     internal fun nextVideoFor(target: TvStreamTarget): FixtureNextVideo? {
         if (!isEnabled()) return null

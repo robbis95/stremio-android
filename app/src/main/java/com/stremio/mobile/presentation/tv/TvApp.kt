@@ -18,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.tv.material3.Text
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.stremio.mobile.presentation.tv.focus.rememberTvFocusMemory
 import com.stremio.mobile.presentation.tv.focus.rememberTvDiscoverFocusMemory
@@ -142,6 +143,9 @@ internal fun TvApp(viewModel: MainViewModel) {
     BackHandler(enabled = route == TvRoute.Details) { returnFromDetails() }
 
     LaunchedEffect(routeName, tvPlaybackState.playbackAttemptId, tvPlaybackState.stage) {
+        if (route == TvRoute.Streams && tvPlaybackState.playbackAttemptId != null) {
+            routeName = TvRouteState(TvRoute.Streams, detailsOrigin).openPlayer().route.name
+        }
         if (route == TvRoute.Player && (tvPlaybackState.playbackAttemptId == null || tvPlaybackState.stage == TvPlaybackStage.Idle)) {
             routeName = TvRouteState(TvRoute.Player, detailsOrigin).closePlayer().route.name
         }
@@ -262,6 +266,11 @@ internal fun TvApp(viewModel: MainViewModel) {
                             episodeFocusRestoreVideoId = episodeFocusRestoreVideoId,
                             episodeFocusRestoreId = episodeFocusRestoreId,
                             onLibraryAction = viewModel::toggleTvDetailsLibrary,
+                            onPlay = {
+                                val item = detailsUiState.details?.item ?: return@TvDetailsScreen
+                                viewModel.playTvSmart(TvStreamTarget.nonEpisodic(item))
+                                routeName = TvRouteState(TvRoute.Details, detailsOrigin).openStreams().route.name
+                            },
                             onChooseSource = {
                                 val item = detailsUiState.details?.item ?: return@TvDetailsScreen
                                 val target = TvStreamTarget.nonEpisodic(item)
@@ -271,6 +280,12 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onEpisodeActivate = { episode ->
                                 val item = detailsUiState.details?.item ?: return@TvDetailsScreen
                                 val target = TvStreamTarget.episode(item, episode) ?: return@TvDetailsScreen
+                                viewModel.playTvSmart(target)
+                                routeName = TvRouteState(TvRoute.Details, detailsOrigin).openStreams().route.name
+                            },
+                            onEpisodeSources = { episode ->
+                                val item = detailsUiState.details?.item ?: return@TvDetailsScreen
+                                val target = TvStreamTarget.episode(item, episode) ?: return@TvDetailsScreen
                                 viewModel.openTvStreams(target)
                                 routeName = TvRouteState(TvRoute.Details, detailsOrigin).openStreams().route.name
                             },
@@ -278,7 +293,14 @@ internal fun TvApp(viewModel: MainViewModel) {
                         )
                     }
                     if (route == TvRoute.Streams) {
-                        TvStreamsScreen(
+                        if (streamUiState.smartSelecting) {
+                            Box(Modifier.fillMaxSize().background(TvColors.background), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                                    Text("Finding the best source…", color = TvColors.primaryText, style = androidx.tv.material3.MaterialTheme.typography.headlineSmall)
+                                    Text(buildString { append(streamUiState.target?.contentName.orEmpty()); streamUiState.target?.episodeLabel?.let { append("  ·  ").append(it) } }, color = TvColors.secondaryText)
+                                }
+                            }
+                        } else TvStreamsScreen(
                             state = streamUiState,
                             focusMemory = streamFocusMemory,
                             onBack = returnFromStreams,
@@ -292,6 +314,7 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onArmIncompatibleValidation = viewModel::armTvIncompatibleConstructionValidation,
                             onArmHoldAfterFirstVisual = viewModel::armTvHoldAfterFirstVisual,
                             onArmMpvRequestedEngine = viewModel::armTvMpvRequestedEngineValidation,
+                            onSmartPlayFixture = viewModel::playTvSmartValidationFixture,
                         )
                     }
                     if (route == TvRoute.Player) {

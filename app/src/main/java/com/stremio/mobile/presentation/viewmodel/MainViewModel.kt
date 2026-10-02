@@ -75,6 +75,9 @@ import com.stremio.mobile.presentation.tv.segments.tvSegmentQuery
 import com.stremio.mobile.presentation.tv.nextEpisodeTarget
 import com.stremio.mobile.presentation.tv.preferredNextEpisodeOption
 import com.stremio.mobile.presentation.tv.TvProviderLoadStatus
+import com.stremio.mobile.presentation.tv.TvSmartStreamSelector
+import com.stremio.mobile.presentation.tv.tvSmartResultApplies
+import com.stremio.mobile.presentation.tv.tvSmartShouldFinish
 import com.stremio.mobile.presentation.tv.TvValidationFixtures
 import com.stremio.mobile.presentation.tv.TvNextVideoProvider
 import com.stremio.mobile.presentation.tv.CoreTvNextVideoProvider
@@ -121,6 +124,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+
+private const val TV_SMART_SETTLE_MS = 1_300L
+private const val TV_SMART_MAX_DISCOVERY_MS = 5_000L
 
 class MainViewModel internal constructor(
     private val authRepository: AuthRepository,
@@ -174,6 +180,8 @@ class MainViewModel internal constructor(
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private val tvSegmentCoordinator = TvSegmentCoordinator()
     private var tvStreamsJob: Job? = null
+    private var tvSmartSettleJob: Job? = null
+    private var tvSmartMaximumJob: Job? = null
     private var tvNextEpisodeJob: Job? = null
     private val tvNextEpisodePrefetch = TvStreamPrefetchCache()
     private val tvEpisodeTransition = TvEpisodeTransitionTracker()
@@ -1989,7 +1997,13 @@ class MainViewModel internal constructor(
     }
 
     /** TV-only source discovery. It deliberately avoids mobile openStreams/remembered autoplay. */
-    internal fun openTvStreams(target: TvStreamTarget) {
+    internal fun openTvStreams(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = false)
+
+    internal fun playTvSmart(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = true)
+
+    private fun discoverTvStreams(target: TvStreamTarget, smartPlay: Boolean) {
+        tvSmartSettleJob?.cancel()
+        tvSmartMaximumJob?.cancel()
         tvStreamsJob?.cancel()
         val previous = _tvStreamSelection.value.takeIf { it.target?.semanticTargetKey == target.semanticTargetKey }
         _tvStreamSelection.value = TvStreamSelectionUiState(
@@ -1998,7 +2012,12 @@ class MainViewModel internal constructor(
             selectedStreamKey = previous?.selectedStreamKey,
             isLoading = true,
             isActive = true,
+            smartSelecting = smartPlay,
         )
+        if (smartPlay) tvSmartMaximumJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(TV_SMART_MAX_DISCOVERY_MS)
+            finishTvSmartSelection(target, "maximum-window")
+        }
         tvStreamsJob = viewModelScope.launch {
             try {
                 tvValidationFixtures?.optionsFor(target)?.let { options ->
@@ -2009,8 +2028,10 @@ class MainViewModel internal constructor(
                             options = options,
                             selectedStreamKey = selectedKey,
                             isActive = true,
+                            smartSelecting = smartPlay,
                         )
                     }
+                    if (smartPlay) finishTvSmartSelection(target, "all-complete")
                     return@launch
                 }
                 catalogRepository.getMetaDetailsFlow(
@@ -2092,7 +2113,15 @@ class MainViewModel internal constructor(
                         isLoading = incoming.isLoading,
                         requestError = null,
                     )
+                    if (smartPlay) {
+                        if (!incoming.isLoading) finishTvSmartSelection(target, "all-complete")
+                        else if (options.isNotEmpty() && tvSmartSettleJob == null) tvSmartSettleJob = viewModelScope.launch {
+                            kotlinx.coroutines.delay(TV_SMART_SETTLE_MS)
+                            finishTvSmartSelection(target, "settled")
+                        }
+                    }
                 }
+                if (smartPlay) finishTvSmartSelection(target, "flow-complete")
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -2101,9 +2130,53 @@ class MainViewModel internal constructor(
                         isLoading = false,
                         requestError = error.message?.take(180) ?: "Sources could not be loaded.",
                     )
+                    if (smartPlay) finishTvSmartSelection(target, "discovery-error")
                 }
             }
         }
+    }
+
+    private fun finishTvSmartSelection(target: TvStreamTarget, trigger: String) {
+        val state = _tvStreamSelection.value
+        if (!tvSmartResultApplies(state.target, target, state.smartSelecting)) return
+        val complete = trigger in setOf("all-complete", "flow-complete", "debug-fixture", "discovery-error")
+        val elapsed = when (trigger) {
+            "settled" -> TV_SMART_SETTLE_MS
+            "maximum-window" -> TV_SMART_MAX_DISCOVERY_MS
+            else -> 0L
+        }
+        if (!complete && !tvSmartShouldFinish(false, elapsed, state.options.isNotEmpty())) return
+        tvSmartSettleJob?.cancel(); tvSmartSettleJob = null
+        tvSmartMaximumJob?.cancel(); tvSmartMaximumJob = null
+        if (trigger == "settled" || trigger == "maximum-window") {
+            tvStreamsJob?.cancel()
+            tvStreamsJob = null
+        }
+        val result = TvSmartStreamSelector.select(state.options, preferredQuality.value)
+        if (BuildConfig.DEBUG) {
+            Timber.tag("TvSmartPlay").d("targetType=%s episode=%s trigger=%s candidates=%d", target.contentType, if (target.videoId == null) "no" else "yes", trigger, result.ranked.size)
+            result.ranked.take(3).forEach { candidate ->
+                Timber.tag("TvSmartPlay").d("rank=%d quality=%s source=%s seeds=%s reasons=%s", candidate.rank, candidate.quality, candidate.option.sourceKind.name.lowercase(), candidate.seedsBucket, candidate.reasons.joinToString(","))
+            }
+            Timber.tag("TvSmartPlay").d("selectedRank=%s reason=%s", result.ranked.firstOrNull()?.rank ?: "none", result.reason ?: "none")
+        }
+        if (result.selected != null) {
+            _tvStreamSelection.value = state.copy(smartSelecting = false, recommendedStreamKey = result.selected.semanticKey,
+                selectedStreamKey = result.selected.semanticKey, isLoading = false)
+            startTvPlayback(target, result.selected)
+        } else _tvStreamSelection.value = state.copy(smartSelecting = false, isLoading = false)
+    }
+
+    internal fun playTvSmartValidationFixture() {
+        tvStreamsJob?.cancel(); tvStreamsJob = null
+        tvSmartSettleJob?.cancel(); tvSmartSettleJob = null
+        tvSmartMaximumJob?.cancel(); tvSmartMaximumJob = null
+        val current = _tvStreamSelection.value
+        val target = current.target ?: return
+        val options = tvValidationFixtures?.smartPlayOptions(target) ?: return
+        _tvStreamSelection.value = current.copy(options = options, providers = emptyList(), selectedProvider = null,
+            isLoading = false, isActive = true, smartSelecting = true)
+        finishTvSmartSelection(target, "debug-fixture")
     }
 
     internal fun enableTvValidationMedia() {
@@ -2847,9 +2920,11 @@ class MainViewModel internal constructor(
     }
 
     internal fun closeTvStreams() {
+        tvSmartSettleJob?.cancel(); tvSmartSettleJob = null
+        tvSmartMaximumJob?.cancel(); tvSmartMaximumJob = null
         tvStreamsJob?.cancel()
         tvStreamsJob = null
-        _tvStreamSelection.value = _tvStreamSelection.value.copy(isActive = false)
+        _tvStreamSelection.value = _tvStreamSelection.value.copy(smartSelecting = false, isLoading = false, isActive = false)
     }
 
     fun closeDetails() {

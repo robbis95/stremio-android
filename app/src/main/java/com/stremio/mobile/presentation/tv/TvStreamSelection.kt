@@ -202,6 +202,8 @@ internal data class TvStreamSelectionUiState(
     val isLoading: Boolean = false,
     val isActive: Boolean = false,
     val requestError: String? = null,
+    val smartSelecting: Boolean = false,
+    val recommendedStreamKey: String? = null,
 ) {
     val pendingProviders: Int get() = providers.count { it.status == TvProviderLoadStatus.Loading }
     val allProvidersFailed: Boolean get() = providers.isNotEmpty() && providers.all { it.status == TvProviderLoadStatus.Error }
@@ -246,6 +248,12 @@ internal fun stableInteractionOptions(
 
 internal fun keepSelectionIfPresent(selectedKey: String?, options: List<StreamOption>): String? =
     selectedKey?.takeIf { key -> options.any { it.semanticKey == key } }
+
+internal fun tvSmartResultApplies(activeTarget: TvStreamTarget?, requestedTarget: TvStreamTarget, selecting: Boolean): Boolean =
+    selecting && activeTarget?.semanticTargetKey == requestedTarget.semanticTargetKey
+
+internal fun tvSmartShouldFinish(allProvidersComplete: Boolean, elapsedMs: Long, hasCandidates: Boolean): Boolean =
+    allProvidersComplete || elapsedMs >= 5_000L || (hasCandidates && elapsedMs >= 1_300L)
 
 internal fun restoredStreamIndex(options: List<StreamOption>, semanticKey: String?, fallbackIndex: Int): Int? {
     if (options.isEmpty()) return null

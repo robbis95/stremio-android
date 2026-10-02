@@ -68,6 +68,7 @@ internal fun TvEpisodeBrowserContent(
     backRequester: FocusRequester,
     onLibraryAction: () -> Unit,
     onEpisodeActivate: (EpisodeOption) -> Unit,
+    onEpisodeSources: (EpisodeOption) -> Unit,
     onBack: () -> Unit,
 ) {
     val initialSeason = browser.defaultSeason ?: browser.seasons.first().season
@@ -81,6 +82,8 @@ internal fun TvEpisodeBrowserContent(
     val actionRequesters = listOf(libraryRequester, backRequester)
     val seasonRequesters = remember(item.id) { mutableMapOf<Long, FocusRequester>() }
     val episodeRequesters = remember(item.id) { mutableMapOf<String, FocusRequester>() }
+    val sourceRequesters = remember(item.id) { mutableMapOf<String, FocusRequester>() }
+    var focusedEpisodeId by remember(item.id) { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var pendingEpisodeFocus by remember(item.id) { mutableStateOf(false) }
@@ -288,19 +291,23 @@ internal fun TvEpisodeBrowserContent(
         ) {
             itemsIndexed(visibleEpisodes, key = { _, episode -> episode.videoId }) { index, episode ->
                 val requester = episodeRequesters.getOrPut(episode.videoId) { FocusRequester() }
+                val sourcesRequester = sourceRequesters.getOrPut(episode.videoId) { FocusRequester() }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TvEpisodeRow(
                     episode = episode,
                     isCurrent = episode.videoId == browser.currentVideoId,
                     isContinue = episode.videoId == browser.continueWatchingVideoId,
-                    modifier = Modifier
+                    modifier = Modifier.weight(1f)
                         .focusRequester(requester)
                         .focusProperties {
                             up = if (index > 0) episodeRequesters.getOrPut(visibleEpisodes[index - 1].videoId) { FocusRequester() }
                             else seasonRequesters[selectedSeason] ?: actionRequesters[0]
                             down = if (index < visibleEpisodes.lastIndex) episodeRequesters.getOrPut(visibleEpisodes[index + 1].videoId) { FocusRequester() } else requester
+                            right = sourcesRequester
                         }
                         .onFocusChanged { focus ->
                             if (focus.isFocused) {
+                                focusedEpisodeId = episode.videoId
                                 focusRegion = EpisodeFocusRegion.Episodes
                                 fallbackIndex = index
                                 rememberedVideoBySeason[selectedSeason] = episode.videoId
@@ -311,6 +318,7 @@ internal fun TvEpisodeBrowserContent(
                         .onKeyEvent { event ->
                             if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                             when (event.key) {
+                                Key.DirectionRight -> { sourcesRequester.requestFocus(); true }
                                 Key.DirectionUp -> if (index == 0) {
                                     (seasonRequesters[selectedSeason] ?: actionRequesters[0]).requestFocus(); true
                                 } else {
@@ -327,6 +335,14 @@ internal fun TvEpisodeBrowserContent(
                             }
                         },
                 )
+                if (focusedEpisodeId == episode.videoId && !episode.upcoming) {
+                    Button(
+                        onClick = { onEpisodeSources(episode) },
+                        modifier = Modifier.focusRequester(sourcesRequester)
+                            .focusProperties { left = requester; right = requester; up = requester; down = requester },
+                    ) { Text("Sources") }
+                }
+                }
             }
         }
     }

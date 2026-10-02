@@ -1,7 +1,7 @@
 # TV Playback Experience Roadmap
 
-Status: planning / architecture guardrail  
-Date: 2026-09-29  
+Status: active implementation / architecture guardrail
+Date: 2026-10-02
 Canonical branch: `feat/android-tv`
 
 This document consolidates the playback-oriented research track, the existing Smart Playback feasibility audit, and the planned generic Skip Segments system.
@@ -535,19 +535,19 @@ The DEBUG Playback Lab's explicit simulated-state presets use a deterministic fi
 
 Validation: `:app:compileDebugKotlin :app:testDebugUnitTest` passed (219 tests, 0 failures); `:app:compileReleaseKotlin :app:assembleRelease` passed; `git diff --check` is recorded with the change. No physical Android TV/Google TV device was connected for PE2 runtime validation. The DEBUG fixture is covered by the debug unit suite; real Core segment availability and on-device skip/arbitration behavior remain unobserved for this PE2 change. External/community providers and auto-skip remain unimplemented.
 
-### PE3 — External segment provider evaluation
-- verify candidate services
-- implement one provider behind the neutral interface
-- compare against Core and actual streams
-- no playback dependency
+### PE3 — External segment provider evaluation — PARKED
+External/community segment-provider evaluation and implementation are parked.
 
-### PE4 — Smart Play metadata/ranking
-Follow `TV_SMART_PLAYBACK_FEASIBILITY.md` SP0-SP3:
-- fixtures
-- parser
-- device capabilities
-- explainable ranker
-- Play + Choose another source
+### PE4 — Smart Play V1 — implemented
+- Deterministic tuple-based ranker reuses the existing preferred-quality setting, parsed quality, source kind, torrent seeds, size, semantic identity, and stable tie-break.
+- TV Play and episode Center use Core-backed `MetaDetails` discovery. Candidates settle for 1.3 seconds after the first usable result; completed discovery selects immediately; a 5-second maximum bounds waiting.
+- Smart selection starts playback through the existing `startTvPlayback` path. Empty discovery returns to the ordinary no-source state; manual `Choose Source` remains available, and a selected stream is marked Recommended.
+- Details exposes Play then Choose Source. Focused episodes play on Center and expose a trailing Sources action on Right.
+- DEBUG diagnostics report only rank, normalized quality, source kind, seed bucket, and reasons. A four-candidate DEBUG fixture uses the same selector and playback-attempt path. With the emulator's existing `Any` quality preference, candidate D (2160p Torrent, 2 seeds) wins because highest known quality ranks first when there is no preference; C (1080p Direct) ranks ahead of B (1080p Torrent, 150 seeds) when the existing preference is set to 1080p because Direct wins the same-quality source comparison.
+- The connected Google TV API 36 emulator ran episode Center → Smart Play on Silo S1E4 using 56 real addon streams and started the regular playback attempt. Its pre-fix diagnostics exposed and led to fixing explicit-quality precedence over title tokens. After the fix, the DEBUG fixture reported D as rank 1 and started the normal attempt path. Player startup hit the existing emulator `StubControllerUnavailable` boundary for Torrent sources; ranking does not depend on playback success. Right → Sources was focused from an episode row, and Center on a manually focused NoTorrent stream started a Direct playback attempt. Movie Details initially focused Play; Right focused Choose Source. Movie Play reached the normal no-source state for the tested item, and the four-stream movie DEBUG fixture selected D and started a normal Torrent playback attempt. D-pad focus was restored after returning to the source picker; no focus requester warning or app crash was observed.
+- Debug compile, 236 unit tests, debug assemble, release compile/assemble, and `git diff --check` passed for the final source.
+
+Smart fallback after resolution or playback failure remains future work.
 
 ### PE5 — Recovery / Smart Fallback
 - attempt coordinator

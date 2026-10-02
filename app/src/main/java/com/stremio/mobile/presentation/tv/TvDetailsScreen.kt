@@ -45,8 +45,10 @@ internal fun TvDetailsScreen(
     episodeFocusRestoreVideoId: String?,
     episodeFocusRestoreId: Int,
     onLibraryAction: () -> Unit,
+    onPlay: () -> Unit,
     onChooseSource: () -> Unit,
     onEpisodeActivate: (EpisodeOption) -> Unit,
+    onEpisodeSources: (EpisodeOption) -> Unit,
     onBack: () -> Unit,
 ) {
     val details = state.details
@@ -54,13 +56,14 @@ internal fun TvDetailsScreen(
     val hasSourceAction = item != null && details?.isLoading == false && state.episodeBrowser == null
     val mode = item?.let(::classifyDetailsArtwork) ?: TvDetailsArtworkMode.TextOnly
     val libraryRequester = remember { FocusRequester() }
+    val playRequester = remember { FocusRequester() }
     val sourceRequester = remember { FocusRequester() }
     val backRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(hasSourceAction, item?.id, state.episodeBrowser != null) {
         runCatching {
-            if (hasSourceAction) sourceRequester.requestFocus() else libraryRequester.requestFocus()
+            if (hasSourceAction) playRequester.requestFocus() else libraryRequester.requestFocus()
         }
             .onFailure { runCatching { backRequester.requestFocus() } }
     }
@@ -125,6 +128,7 @@ internal fun TvDetailsScreen(
                 backRequester = backRequester,
                 onLibraryAction = onLibraryAction,
                 onEpisodeActivate = onEpisodeActivate,
+                onEpisodeSources = onEpisodeSources,
                 onBack = onBack,
             )
         } else Column(
@@ -172,23 +176,28 @@ internal fun TvDetailsScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (hasSourceAction) {
                     Button(
+                        onClick = onPlay,
+                        modifier = Modifier.focusRequester(playRequester)
+                            .focusProperties { left = backRequester; right = sourceRequester; up = playRequester; down = playRequester },
+                    ) { Text("Play") }
+                    Button(
                         onClick = onChooseSource,
                         modifier = Modifier.focusRequester(sourceRequester)
-                            .focusProperties { left = backRequester; right = libraryRequester; up = sourceRequester; down = sourceRequester },
+                            .focusProperties { left = playRequester; right = libraryRequester; up = sourceRequester; down = sourceRequester },
                     ) { Text("Choose Source") }
                 }
                 Button(
                     onClick = onLibraryAction,
                     enabled = !state.isLibraryActionLoading,
                     modifier = Modifier.focusRequester(libraryRequester)
-                        .focusProperties { left = sourceRequester; right = backRequester; up = libraryRequester; down = libraryRequester },
+                        .focusProperties { left = if (hasSourceAction) sourceRequester else backRequester; right = backRequester; up = libraryRequester; down = libraryRequester },
                 ) {
                     Text(if (state.isInLibrary) "✓  In Library" else "+  Add to Library")
                 }
                 OutlinedButton(
                     onClick = onBack,
                     modifier = Modifier.focusRequester(backRequester)
-                        .focusProperties { left = libraryRequester; right = sourceRequester; up = backRequester; down = backRequester },
+                        .focusProperties { left = libraryRequester; right = if (hasSourceAction) playRequester else libraryRequester; up = backRequester; down = backRequester },
                 ) {
                     Text("Back")
                 }

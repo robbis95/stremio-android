@@ -59,6 +59,7 @@ internal fun TvStreamsScreen(
     onArmIncompatibleValidation: () -> Unit = {},
     onArmHoldAfterFirstVisual: () -> Unit = {},
     onArmMpvRequestedEngine: () -> Unit = {},
+    onSmartPlayFixture: () -> Unit = {},
 ) {
     val target = state.target ?: return
     val targetKey = target.semanticTargetKey
@@ -70,6 +71,7 @@ internal fun TvStreamsScreen(
     val incompatibleRequester = remember(targetKey) { FocusRequester() }
     val holdRequester = remember { FocusRequester() }
     val mpvRequester = remember(targetKey) { FocusRequester() }
+    val smartFixtureRequester = remember(targetKey) { FocusRequester() }
     val providerRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val streamRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val visible = state.visibleOptions
@@ -84,6 +86,7 @@ internal fun TvStreamsScreen(
             TvStreamsDebugAction(incompatibleRequester, "DEBUG: force hardware-decoding recreation on B", onArmIncompatibleValidation),
             TvStreamsDebugAction(holdRequester, "DEBUG: pause next fixture after first visual", onArmHoldAfterFirstVisual),
             TvStreamsDebugAction(mpvRequester, "DEBUG: request MPV for fixture B", onArmMpvRequestedEngine),
+            TvStreamsDebugAction(smartFixtureRequester, "DEBUG: Smart Play ranking fixture", onSmartPlayFixture),
         )
     } else {
         emptyList()
@@ -246,6 +249,7 @@ internal fun TvStreamsScreen(
                     TvSourceRow(
                         option = option,
                         selected = state.selectedStreamKey == option.semanticKey,
+                        recommended = state.recommendedStreamKey == option.semanticKey,
                         modifier = Modifier
                             .focusRequester(requester)
                             .focusProperties { up = upRequester; down = downRequester }
@@ -313,7 +317,7 @@ private data class TvStreamsDebugAction(
 )
 
 @Composable
-private fun TvSourceRow(option: StreamOption, selected: Boolean, modifier: Modifier = Modifier) {
+private fun TvSourceRow(option: StreamOption, selected: Boolean, recommended: Boolean, modifier: Modifier = Modifier) {
     var focused by remember(option.semanticKey) { mutableStateOf(false) }
     val shape = RoundedCornerShape(9.dp)
     Row(
@@ -360,6 +364,10 @@ private fun TvSourceRow(option: StreamOption, selected: Boolean, modifier: Modif
         if (selected) {
             Spacer(Modifier.width(14.dp))
             Text("✓ Selected", color = TvColors.accent, style = MaterialTheme.typography.labelLarge)
+        }
+        if (recommended) {
+            Spacer(Modifier.width(14.dp))
+            Text("Recommended", color = TvColors.accent, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

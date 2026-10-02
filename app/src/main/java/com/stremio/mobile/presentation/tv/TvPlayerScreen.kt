@@ -812,6 +812,10 @@ private fun TvStartingOverlay(state: TvPlaybackUiState) {
         ) {
             TvBufferingIndicator(size = 54.dp)
             Text(if (state.stage == TvPlaybackStage.Resolving) "Finding your stream" else "Getting things ready", color = TvColors.onMedia, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            if (state.fallbackProgress != null) {
+                Text("Trying another source…", color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyLarge)
+                Text(state.fallbackProgress, color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyMedium)
+            }
             if (title.isNotBlank()) Text(title, color = TvColors.mediaSecondary, style = MaterialTheme.typography.bodyLarge)
         }
     }

@@ -344,8 +344,8 @@ class ExoStreamPlayer(
 
         override fun onPlayerError(error: PlaybackException) {
             if (!isCurrentLoad()) return
-            publishState(error = error.message ?: "Playback failed")
             playbackEventListener?.invoke(PlayerPlaybackEvent.PlaybackError(classifyPlaybackFailure(error)))
+            publishState(error = error.message ?: "Playback failed")
         }
 
         override fun onRenderedFirstFrame() {

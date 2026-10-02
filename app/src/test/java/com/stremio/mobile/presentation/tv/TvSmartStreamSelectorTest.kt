@@ -44,6 +44,49 @@ class TvSmartStreamSelectorTest {
         assertEquals("torrent", result.selected?.semanticKey)
     }
 
+    @Test fun `healthy 2160p torrent beats 1080p direct without a preference`() {
+        assertEquals("torrent", TvSmartStreamSelector.select(listOf(
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("torrent", "2160p", StreamSourceKind.Torrent, seeds = "100"),
+        )).selected?.semanticKey)
+    }
+
+    @Test fun `reasonable 2160p torrent beats 1080p direct without a preference`() {
+        assertEquals("torrent", TvSmartStreamSelector.select(listOf(
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("torrent", "2160p", StreamSourceKind.Torrent, seeds = "20"),
+        )).selected?.semanticKey)
+    }
+
+    @Test fun `weak 2160p torrent loses to 1080p direct without a preference`() {
+        assertEquals("direct", TvSmartStreamSelector.select(listOf(
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("torrent", "2160p", StreamSourceKind.Torrent, seeds = "2"),
+        )).selected?.semanticKey)
+    }
+
+    @Test fun `dead 2160p torrent loses to 1080p direct without a preference`() {
+        assertEquals("direct", TvSmartStreamSelector.select(listOf(
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("torrent", "2160p", StreamSourceKind.Torrent, seeds = "0"),
+        )).selected?.semanticKey)
+    }
+
+    @Test fun `explicit 2160p preference keeps weak 2160p torrent ahead`() {
+        assertEquals("torrent", TvSmartStreamSelector.select(listOf(
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("torrent", "2160p", StreamSourceKind.Torrent, seeds = "2"),
+        ), "2160p").selected?.semanticKey)
+    }
+
+    @Test fun `preferred 1080p direct wins comparable source alternatives`() {
+        assertEquals("direct", TvSmartStreamSelector.select(listOf(
+            option("torrent", "1080p", StreamSourceKind.Torrent, seeds = "150"),
+            option("direct", "1080p", StreamSourceKind.Direct),
+            option("higher", "2160p", StreamSourceKind.Direct),
+        ), "1080p").selected?.semanticKey)
+    }
+
     @Test fun `provider title does not determine rank`() {
         val first = option("stable-a", "1080p", StreamSourceKind.Torrent, seeds = "50", provider = "Zeta")
         val second = option("stable-b", "1080p", StreamSourceKind.Torrent, seeds = "20", provider = "Alpha")

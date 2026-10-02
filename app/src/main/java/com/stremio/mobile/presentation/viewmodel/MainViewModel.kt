@@ -54,6 +54,9 @@ import com.stremio.mobile.presentation.tv.TvPlaybackUiState
 import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
 import com.stremio.mobile.presentation.tv.TvPlaybackStage
 import com.stremio.mobile.presentation.tv.TvPlaybackTiming
+import com.stremio.mobile.presentation.tv.TvPlaybackFailureReason
+import com.stremio.mobile.presentation.tv.TvSmartPlaybackSession
+import com.stremio.mobile.presentation.tv.tvSmartFallbackNextCandidateIndex
 import com.stremio.mobile.presentation.tv.TvNextEpisodeState
 import com.stremio.mobile.presentation.tv.TvNextEpisodeTransition
 import com.stremio.mobile.presentation.tv.isCurrentTvNextEpisode
@@ -127,6 +130,7 @@ import org.json.JSONObject
 
 private const val TV_SMART_SETTLE_MS = 1_300L
 private const val TV_SMART_MAX_DISCOVERY_MS = 5_000L
+private const val TV_SMART_STARTUP_TIMEOUT_MS = 45_000L
 
 class MainViewModel internal constructor(
     private val authRepository: AuthRepository,
@@ -176,6 +180,8 @@ class MainViewModel internal constructor(
     private var tvPlaybackJob: Job? = null
     private var tvReusePendingAttemptId: String? = null
     private var tvPlaybackMonitorJob: Job? = null
+    private var tvStartupTimeoutJob: Job? = null
+    private var tvSmartPlaybackSession: TvSmartPlaybackSession? = null
     private var tvSegmentProviderJob: Job? = null
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private val tvSegmentCoordinator = TvSegmentCoordinator()
@@ -2002,6 +2008,7 @@ class MainViewModel internal constructor(
     internal fun playTvSmart(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = true)
 
     private fun discoverTvStreams(target: TvStreamTarget, smartPlay: Boolean) {
+        tvSmartPlaybackSession = null
         tvSmartSettleJob?.cancel()
         tvSmartMaximumJob?.cancel()
         tvStreamsJob?.cancel()
@@ -2161,9 +2168,11 @@ class MainViewModel internal constructor(
             Timber.tag("TvSmartPlay").d("selectedRank=%s reason=%s", result.ranked.firstOrNull()?.rank ?: "none", result.reason ?: "none")
         }
         if (result.selected != null) {
+            tvSmartPlaybackSession = TvSmartPlaybackSession(target, result.ranked.map { it.option })
+            if (BuildConfig.DEBUG) Log.d("TvSmartFallback", "session-start candidates=${result.ranked.size}")
             _tvStreamSelection.value = state.copy(smartSelecting = false, recommendedStreamKey = result.selected.semanticKey,
                 selectedStreamKey = result.selected.semanticKey, isLoading = false)
-            startTvPlayback(target, result.selected)
+            startTvPlayback(target, result.selected, smartSessionIndex = 0)
         } else _tvStreamSelection.value = state.copy(smartSelecting = false, isLoading = false)
     }
 
@@ -2212,10 +2221,21 @@ class MainViewModel internal constructor(
     }
 
     /** Starts the explicitly activated TV source without entering the mobile autoplay/health path. */
-    internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption, reuseExistingExo: Boolean = false) {
+    internal fun startTvPlayback(target: TvStreamTarget, option: StreamOption, reuseExistingExo: Boolean = false, smartSessionIndex: Int? = null) {
+        val smartSession = if (smartSessionIndex == null) {
+            tvSmartPlaybackSession = null
+            null
+        } else {
+            tvSmartPlaybackSession?.takeIf { session ->
+                session.target.semanticTargetKey == target.semanticTargetKey &&
+                    session.rankedCandidates.getOrNull(smartSessionIndex)?.semanticKey == option.semanticKey &&
+                    !session.cancelled && !session.committed && option.semanticKey !in session.attemptedSemanticKeys
+            } ?: return
+        }
         cancelTvNextEpisodePrefetch("attempt-changed")
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
+        tvStartupTimeoutJob?.cancel()
         tvSegmentProviderJob?.cancel()
         latestTvCorePlayer = null
         val heldExoForReuse = reuseExistingExo && playbackRepository.getPlayer()?.engine == PlayerEngine.EXO
@@ -2234,6 +2254,9 @@ class MainViewModel internal constructor(
         ) ?: configuredEngine
         val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
+        if (smartSession != null) {
+            tvSmartPlaybackSession = smartSession.start(smartSessionIndex!!, attempt.attemptId) ?: return
+        }
         tvReusePendingAttemptId = attempt.attemptId.takeIf { heldExoForReuse }
         if (reuseExistingExo && BuildConfig.DEBUG) {
             Log.d("PlaybackReuse", "next-episode requested attempt=${attempt.attemptId} previousAttempt=${_tvPlayback.value.playbackAttemptId ?: "unknown"} media=${target.videoId ?: target.contentId}")
@@ -2257,9 +2280,22 @@ class MainViewModel internal constructor(
             requestedEngine = requestedEngine,
             timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
             nextEpisode = nextEpisodeStateFor(attempt.attemptId, target),
+            fallbackProgress = if (smartSessionIndex != null && smartSessionIndex > 0)
+                "Source ${smartSessionIndex + 1} of ${smartSession?.rankedCandidates?.size ?: 0}" else null,
         )
         lastTvTimeReportNanos = 0L
         Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated", server = if (serverRequired) "pending" else "not-required"))
+        if (smartSessionIndex != null && BuildConfig.DEBUG) {
+            val seeds = option.seeds?.filter(Char::isDigit)?.toIntOrNull()?.let { if (it >= 100) "100+" else it.toString() } ?: "unknown"
+            Log.d("TvSmartFallback", "attempt rank=${smartSessionIndex + 1} quality=${option.quality ?: "unknown"} source=${option.sourceKind.name.lowercase()} seeds=$seeds")
+        }
+        tvStartupTimeoutJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(TV_SMART_STARTUP_TIMEOUT_MS)
+            val state = _tvPlayback.value
+            if (isCurrentTvAttempt(state, attempt.attemptId) && !state.firstVisualObserved) {
+                failTvPlayback(attempt, "Couldn’t start this source", TvPlaybackFailureReason.StartupTimeout)
+            }
+        }
 
         tvPlaybackJob = viewModelScope.launch {
             try {
@@ -2320,7 +2356,7 @@ class MainViewModel internal constructor(
                 )
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@launch
                 if (!loaded) {
-                    failTvPlayback(attempt, "Couldn’t start this source", PlaybackResolutionFailure.NoPlayableSource.name)
+                    failTvPlayback(attempt, "Couldn’t start this source", TvPlaybackFailureReason.Source)
                     return@launch
                 }
                 if (tvReusePendingAttemptId == attempt.attemptId) tvReusePendingAttemptId = null
@@ -2336,8 +2372,7 @@ class MainViewModel internal constructor(
                 throw cancelled
             } catch (failure: Exception) {
                 if (isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) {
-                    val category = (failure as? PlaybackResolutionException)?.category?.name ?: PlaybackResolutionFailure.PlayerLoadError.name
-                    failTvPlayback(attempt, "Couldn’t start this source", category)
+                    failTvPlayback(attempt, "Couldn’t start this source", tvPlaybackFailureReason(failure))
                 }
             }
         }
@@ -2424,16 +2459,23 @@ class MainViewModel internal constructor(
 
     private fun onTvPlaybackEvent(attempt: TvPlaybackAttempt, event: PlayerPlaybackEvent) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        if (_tvPlayback.value.stage == TvPlaybackStage.Error) return
         when (event) {
             is PlayerPlaybackEvent.FirstVisualFrame -> {
                 val current = _tvPlayback.value
                 if (current.firstVisualObserved) return
+                tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+                tvSmartPlaybackSession = tvSmartPlaybackSession?.commit(attempt.attemptId)
                 val timing = current.timing.copy(firstVisualSignalNanos = SystemClock.elapsedRealtimeNanos())
                 _tvPlayback.value = current.copy(
                     stage = TvPlaybackStage.Playing,
                     firstVisualObserved = true,
                     timing = timing,
+                    fallbackProgress = null,
                 )
+                if (BuildConfig.DEBUG && tvSmartPlaybackSession?.currentAttemptId == attempt.attemptId) {
+                    Log.d("TvSmartFallback", "committed attempt=${attempt.attemptId} candidateRank=${tvSmartPlaybackSession?.currentIndex?.plus(1)}")
+                }
                 maybePrefetchTvNextEpisode(attempt, _tvPlayback.value)
                 val actualEngine = current.actualEngine ?: playbackRepository.actualEngine()
                 authRepository.rememberLocalStreamSelection(
@@ -2461,7 +2503,7 @@ class MainViewModel internal constructor(
                         tvEpisodeTransition.reset()
                     }
             }
-            is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", event.category)
+            is PlayerPlaybackEvent.PlaybackError -> failTvPlayback(attempt, "Couldn’t start this source", tvPlaybackFailureReason(event.category))
         }
     }
 
@@ -2483,6 +2525,7 @@ class MainViewModel internal constructor(
                 if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@collect
                 syncTvNextVideo(attempt.attemptId)
                 val current = _tvPlayback.value
+                if (current.stage == TvPlaybackStage.Error) return@collect
                 val updated = current.copy(
                     runtime = runtime,
                     isBuffering = runtime.isBuffering,
@@ -2511,7 +2554,7 @@ class MainViewModel internal constructor(
                 val fallbackNotice = current.requestedEngine != current.actualEngine &&
                     runtime.error == "MPV unavailable; using ExoPlayer."
                 if (runtime.error != null && !fallbackNotice && current.stage != TvPlaybackStage.Error) {
-                    failTvPlayback(attempt, "Couldn’t start this source", current.stage.name.lowercase())
+                    failTvPlayback(attempt, "Couldn’t start this source", TvPlaybackFailureReason.UnknownStartup)
                 } else if (runtime.ended && current.stage != TvPlaybackStage.Ended) {
                     if (tvProgressReportingAllowed(current) && runtime.durationMs > 0 && tvPlaybackCompletionPolicy.reportEnded) {
                         playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
@@ -2805,8 +2848,12 @@ class MainViewModel internal constructor(
 
     private var lastTvTimeReportNanos = 0L
 
-    private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, stage: String) {
+    private fun failTvPlayback(attempt: TvPlaybackAttempt, message: String, reason: TvPlaybackFailureReason) {
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
+        if (maybeFallbackTvPlayback(attempt.attemptId, reason)) return
+        tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+        tvPlaybackJob?.cancel(); tvPlaybackJob = null
+        tvPlaybackMonitorJob?.cancel(); tvPlaybackMonitorJob = null
         if (shouldReleaseRetainedPlayerAfterTvFailure(tvReusePendingAttemptId, attempt.attemptId)) {
             tvReusePendingAttemptId = null
             playbackRepository.setPlaybackEventListener(null)
@@ -2814,7 +2861,54 @@ class MainViewModel internal constructor(
         }
         _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
         tvEpisodeTransition.reset()
-        Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:$stage", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
+        Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:${reason.name.lowercase()}", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
+    }
+
+    /** The only startup recovery decision point. Every callback must still own the active attempt. */
+    private fun maybeFallbackTvPlayback(failedAttemptId: String, reason: TvPlaybackFailureReason): Boolean {
+        val playback = _tvPlayback.value
+        if (!isCurrentTvAttempt(playback, failedAttemptId) || playback.firstVisualObserved) return false
+        val session = tvSmartPlaybackSession ?: return false
+        if (session.cancelled || session.committed || session.currentAttemptId != failedAttemptId ||
+            session.target.semanticTargetKey != playback.attempt?.target?.semanticTargetKey
+        ) return false
+        val nextIndex = tvSmartFallbackNextCandidateIndex(
+            session = session,
+            failedAttemptId = failedAttemptId,
+            currentAttemptId = playback.playbackAttemptId,
+            currentTargetKey = playback.attempt.target.semanticTargetKey,
+            firstVisualObserved = playback.firstVisualObserved,
+            smartPlay = true,
+        ) ?: run {
+            tvSmartPlaybackSession = null
+            return false
+        }
+        val option = session.rankedCandidates[nextIndex]
+        if (BuildConfig.DEBUG) Log.d("TvSmartFallback", "failed rank=${session.currentIndex + 1} reason=${reason.name.lowercase()}")
+        val updated = playback.copy(fallbackProgress = "Source ${nextIndex + 1} of ${session.rankedCandidates.size}")
+        _tvPlayback.value = updated
+        tvSmartPlaybackSession = session.copy(currentAttemptId = null)
+        startTvPlayback(session.target, option, smartSessionIndex = nextIndex)
+        return true
+    }
+
+    private fun tvPlaybackFailureReason(failure: Exception): TvPlaybackFailureReason = when (failure) {
+        is com.stremio.mobile.presentation.tv.TvSmartFallbackFixtureFailure -> failure.reason
+        is PlaybackResolutionException -> when (failure.category) {
+            PlaybackResolutionFailure.StreamingServerStartFailed -> TvPlaybackFailureReason.ServerStartup
+            PlaybackResolutionFailure.CoreConversionError,
+            PlaybackResolutionFailure.CoreResolutionTimeout,
+            PlaybackResolutionFailure.NoPlayableSource -> TvPlaybackFailureReason.Resolution
+            PlaybackResolutionFailure.PlayerLoadError -> TvPlaybackFailureReason.Source
+        }
+        else -> TvPlaybackFailureReason.UnknownStartup
+    }
+
+    private fun tvPlaybackFailureReason(category: String): TvPlaybackFailureReason = when {
+        category.contains("container", ignoreCase = true) || category.contains("format", ignoreCase = true) -> TvPlaybackFailureReason.Container
+        category.contains("decoder", ignoreCase = true) || category.contains("codec", ignoreCase = true) -> TvPlaybackFailureReason.Decoder
+        category.contains("source", ignoreCase = true) || category.contains("http", ignoreCase = true) || category.contains("network", ignoreCase = true) -> TvPlaybackFailureReason.Source
+        else -> TvPlaybackFailureReason.UnknownStartup
     }
 
     internal fun toggleTvPlayback() {
@@ -2902,6 +2996,9 @@ class MainViewModel internal constructor(
             Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "closed", state.actualEngine, state.timing))
         }
         tvPlaybackJob?.cancel()
+        tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+        tvSmartPlaybackSession = tvSmartPlaybackSession?.cancel()
+        tvSmartPlaybackSession = null
         tvNextEpisodeJob?.cancel()
         tvNextEpisodeJob = null
         tvPlaybackJob = null

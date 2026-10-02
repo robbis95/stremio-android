@@ -86,7 +86,7 @@ internal fun TvStreamsScreen(
             TvStreamsDebugAction(incompatibleRequester, "DEBUG: force hardware-decoding recreation on B", onArmIncompatibleValidation),
             TvStreamsDebugAction(holdRequester, "DEBUG: pause next fixture after first visual", onArmHoldAfterFirstVisual),
             TvStreamsDebugAction(mpvRequester, "DEBUG: request MPV for fixture B", onArmMpvRequestedEngine),
-            TvStreamsDebugAction(smartFixtureRequester, "DEBUG: Smart Play ranking fixture", onSmartPlayFixture),
+            TvStreamsDebugAction(smartFixtureRequester, "DEBUG: Smart Fallback A → B → C fixture", onSmartPlayFixture),
         )
     } else {
         emptyList()

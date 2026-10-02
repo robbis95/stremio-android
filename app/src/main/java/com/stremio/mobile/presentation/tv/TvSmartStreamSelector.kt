@@ -10,6 +10,7 @@ internal data class TvSmartStreamCandidate(
     val reasons: List<String>,
     val quality: String,
     val seedsBucket: String,
+    val effectiveQualityRank: Int,
 )
 
 internal data class TvSmartStreamSelection(
@@ -26,7 +27,7 @@ internal object TvSmartStreamSelector {
         val preferred = normalizeQuality(preferredQuality)
         val ranked = unique.map { option -> score(option, preferred) }
             .sortedWith { a, b -> compare(b, a) }
-            .mapIndexed { index, candidate -> TvSmartStreamCandidate(candidate.option, index + 1, candidate.reasons, candidate.quality, candidate.seedsBucket) }
+            .mapIndexed { index, candidate -> TvSmartStreamCandidate(candidate.option, index + 1, candidate.reasons, candidate.quality, candidate.seedsBucket, candidate.effectiveQualityRank) }
         return TvSmartStreamSelection(ranked.first().option, ranked, ranked.first().reasons.joinToString(","))
     }
 
@@ -40,6 +41,7 @@ internal object TvSmartStreamSelector {
         val qualityRank: Int,
         val sourceRank: Int,
         val seedRank: Int,
+        val effectiveQualityRank: Int,
         val sizeRank: Long,
     )
 
@@ -51,6 +53,16 @@ internal object TvSmartStreamSelector {
         val seeds = option.seeds?.filter(Char::isDigit)?.toIntOrNull()
         val bucket = seedBucket(seeds)
         val seedRank = when { seeds == null -> 0; seeds >= 100 -> 7; seeds >= 50 -> 6; seeds >= 20 -> 5; seeds >= 10 -> 4; seeds >= 5 -> 3; seeds >= 1 -> 2; else -> 1 }
+        // Seed reliability only adjusts quality when the user has no exact quality request.
+        // A healthy torrent keeps its resolution; a weak torrent loses one/two/three tiers.
+        val reliabilityPenalty = if (option.sourceKind != StreamSourceKind.Torrent || exactPreferred) 0 else when {
+            seeds == null -> 1
+            seeds >= 20 -> 0
+            seeds >= 5 -> 1
+            seeds >= 1 -> 2
+            else -> 3
+        }
+        val effectiveQualityRank = (qualityRank - reliabilityPenalty).coerceAtLeast(0)
         val sourceRank = when (option.sourceKind) {
             StreamSourceKind.Direct -> 4
             StreamSourceKind.Torrent -> if (seedRank >= 4) 3 else 2
@@ -72,11 +84,13 @@ internal object TvSmartStreamSelector {
         }
         return Scored(option, reasons = reasons, quality = quality, seedsBucket = bucket,
             qualityPref = if (exactPreferred) 1 else 0, qualityRank = qualityRank,
+            effectiveQualityRank = effectiveQualityRank,
             sourceRank = sourceRank, seedRank = seedRank, sizeRank = size ?: Long.MAX_VALUE)
     }
 
     private fun compare(a: Scored, b: Scored): Int {
         compareValues(a.qualityPref, b.qualityPref).takeIf { it != 0 }?.let { return it }
+        compareValues(a.effectiveQualityRank, b.effectiveQualityRank).takeIf { it != 0 }?.let { return it }
         compareValues(a.qualityRank, b.qualityRank).takeIf { it != 0 }?.let { return it }
         compareValues(a.sourceRank, b.sourceRank).takeIf { it != 0 }?.let { return it }
         compareValues(a.seedRank, b.seedRank).takeIf { it != 0 }?.let { return it }

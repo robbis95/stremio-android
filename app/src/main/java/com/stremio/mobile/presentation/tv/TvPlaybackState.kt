@@ -10,6 +10,52 @@ internal fun newTvPlaybackAttemptId(): String = UUID.randomUUID().toString()
 
 internal enum class TvPlaybackStage { Idle, Resolving, Preparing, Playing, Ended, Error }
 
+internal enum class TvPlaybackFailureReason { Resolution, ServerStartup, Source, Container, Decoder, StartupTimeout, UnknownStartup }
+
+/** A single immutable Smart Play snapshot. Every semantic source can be started at most once. */
+internal data class TvSmartPlaybackSession(
+    val target: TvStreamTarget,
+    val rankedCandidates: List<StreamOption>,
+    val smartPlay: Boolean = true,
+    val attemptedSemanticKeys: Set<String> = emptySet(),
+    val currentIndex: Int = -1,
+    val currentAttemptId: String? = null,
+    val committed: Boolean = false,
+    val cancelled: Boolean = false,
+) {
+    fun start(index: Int, attemptId: String): TvSmartPlaybackSession? {
+        val candidate = rankedCandidates.getOrNull(index) ?: return null
+        if (cancelled || committed || candidate.semanticKey in attemptedSemanticKeys) return null
+        return copy(attemptedSemanticKeys = attemptedSemanticKeys + candidate.semanticKey, currentIndex = index, currentAttemptId = attemptId)
+    }
+
+    fun nextIndex(maxAttempts: Int = MAX_SMART_FALLBACK_ATTEMPTS): Int? {
+        if (cancelled || committed || attemptedSemanticKeys.size >= maxAttempts) return null
+        return rankedCandidates.indices.firstOrNull { rankedCandidates[it].semanticKey !in attemptedSemanticKeys }
+    }
+
+    fun commit(attemptId: String): TvSmartPlaybackSession =
+        if (!cancelled && currentAttemptId == attemptId) copy(committed = true) else this
+
+    fun cancel(): TvSmartPlaybackSession = copy(cancelled = true)
+
+    companion object { const val MAX_SMART_FALLBACK_ATTEMPTS = 5 }
+}
+
+internal fun tvSmartFallbackNextCandidateIndex(
+    session: TvSmartPlaybackSession?,
+    failedAttemptId: String,
+    currentAttemptId: String?,
+    currentTargetKey: String?,
+    firstVisualObserved: Boolean,
+    smartPlay: Boolean,
+    maxAttempts: Int = TvSmartPlaybackSession.MAX_SMART_FALLBACK_ATTEMPTS,
+): Int? {
+    if (!smartPlay || firstVisualObserved || session == null || !session.smartPlay || session.cancelled || session.committed) return null
+    if (session.currentAttemptId != failedAttemptId || currentAttemptId != failedAttemptId || session.target.semanticTargetKey != currentTargetKey) return null
+    return session.nextIndex(maxAttempts)
+}
+
 internal enum class TvNextEpisodeTransition { Idle, Loading, Failed }
 
 /** Episode prompt/transition state is scoped to a single TV playback attempt. */
@@ -113,6 +159,7 @@ internal data class TvPlaybackUiState(
     val runtime: com.stremio.mobile.player.PlayerRuntimeState = com.stremio.mobile.player.PlayerRuntimeState(),
     val resolvedSegments: List<TvResolvedSegment> = emptyList(),
     val nextEpisode: TvNextEpisodeState = TvNextEpisodeState(),
+    val fallbackProgress: String? = null,
 ) {
     val isResolvingOrPreparing: Boolean get() = stage == TvPlaybackStage.Resolving || stage == TvPlaybackStage.Preparing
     val playbackAttemptId: String? get() = attempt?.attemptId

@@ -127,7 +127,7 @@ class TvValidationFixtures(
         )
     }
 
-    /** Four synthetic candidates for exercising Smart Play through the production selector and attempt path. */
+    /** Three deterministic candidates for exercising automatic startup fallback. */
     internal fun smartPlayOptions(target: TvStreamTarget): List<StreamOption>? {
         if (!BuildConfig.DEBUG) return null
         val request = ResourceRequest("debug-tv-smart", ResourcePath("stream", target.contentType, target.videoId ?: target.contentId))
@@ -144,10 +144,9 @@ class TvValidationFixtures(
             sourceKind = kind,
         )
         return listOf(
-            candidate("a", "720p", StreamSourceKind.Direct),
-            candidate("b", "1080p", StreamSourceKind.Torrent, "150"),
-            candidate("c", "1080p", StreamSourceKind.Direct),
-            candidate("d", "2160p", StreamSourceKind.Torrent, "2"),
+            candidate("a", "1080p", StreamSourceKind.Direct),
+            candidate("b", "720p", StreamSourceKind.Direct),
+            candidate("c", "480p", StreamSourceKind.Direct),
         )
     }
 
@@ -158,6 +157,21 @@ class TvValidationFixtures(
     }
 
     override suspend fun resolve(option: StreamOption): ResolvedPlayableSource {
+        if (BuildConfig.DEBUG) when (option.semanticKey) {
+            "tv-smart-a" -> throw TvSmartFallbackFixtureFailure(TvPlaybackFailureReason.Container)
+            "tv-smart-b" -> throw TvSmartFallbackFixtureFailure(TvPlaybackFailureReason.Source)
+            "tv-smart-c" -> {
+                val resourceId = appContext.resources.getIdentifier("tv_fixture_c", "raw", appContext.packageName)
+                check(resourceId != 0) { "Missing bundled TV fixture tv_fixture_c" }
+                return ResolvedPlayableSource(
+                    playableUri = Uri.parse("android.resource://${appContext.packageName}/$resourceId").toString(),
+                    resolutionKind = "debug-tv-smart-fallback-fixture",
+                    convertedSourceKind = "C",
+                    usedCoreConversion = false,
+                    usedStreamingServer = false,
+                )
+            }
+        }
         val fixture = FIXTURES.firstOrNull { option.semanticKey == "tv-validation-${it.id}" }
         if (fixture == null || !isEnabled()) return coreResolver.resolve(option)
         val resourceId = appContext.resources.getIdentifier(fixture.rawResourceName, "raw", appContext.packageName)
@@ -195,6 +209,8 @@ class TvValidationFixtures(
         )
     }
 }
+
+internal class TvSmartFallbackFixtureFailure(val reason: TvPlaybackFailureReason) : Exception()
 
 internal data class FixtureNextVideo(val video: Video?)
 

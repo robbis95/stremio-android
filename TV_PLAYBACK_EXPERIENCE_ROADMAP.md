@@ -539,21 +539,18 @@ Validation: `:app:compileDebugKotlin :app:testDebugUnitTest` passed (219 tests, 
 External/community segment-provider evaluation and implementation are parked.
 
 ### PE4 — Smart Play V1 — implemented
-- Deterministic tuple-based ranker reuses the existing preferred-quality setting, parsed quality, source kind, torrent seeds, size, semantic identity, and stable tie-break.
+- Deterministic tuple-based ranker reuses the existing preferred-quality setting, parsed quality, source kind, torrent seeds, size, semantic identity, and stable tie-break. With no exact preference, 1–4 seed torrents lose two quality tiers and dead torrents lose three; healthy torrents retain their quality tier. An exact user preference remains strongest.
 - TV Play and episode Center use Core-backed `MetaDetails` discovery. Candidates settle for 1.3 seconds after the first usable result; completed discovery selects immediately; a 5-second maximum bounds waiting.
 - Smart selection starts playback through the existing `startTvPlayback` path. Empty discovery returns to the ordinary no-source state; manual `Choose Source` remains available, and a selected stream is marked Recommended.
 - Details exposes Play then Choose Source. Focused episodes play on Center and expose a trailing Sources action on Right.
-- DEBUG diagnostics report only rank, normalized quality, source kind, seed bucket, and reasons. A four-candidate DEBUG fixture uses the same selector and playback-attempt path. With the emulator's existing `Any` quality preference, candidate D (2160p Torrent, 2 seeds) wins because highest known quality ranks first when there is no preference; C (1080p Direct) ranks ahead of B (1080p Torrent, 150 seeds) when the existing preference is set to 1080p because Direct wins the same-quality source comparison.
+- DEBUG diagnostics report only rank, normalized quality, source kind, seed bucket, and reasons. Ranking tests cover weak-torrent reliability, explicit preferences, arrival order, provider independence, and semantic-key ties.
 - The connected Google TV API 36 emulator ran episode Center → Smart Play on Silo S1E4 using 56 real addon streams and started the regular playback attempt. Its pre-fix diagnostics exposed and led to fixing explicit-quality precedence over title tokens. After the fix, the DEBUG fixture reported D as rank 1 and started the normal attempt path. Player startup hit the existing emulator `StubControllerUnavailable` boundary for Torrent sources; ranking does not depend on playback success. Right → Sources was focused from an episode row, and Center on a manually focused NoTorrent stream started a Direct playback attempt. Movie Details initially focused Play; Right focused Choose Source. Movie Play reached the normal no-source state for the tested item, and the four-stream movie DEBUG fixture selected D and started a normal Torrent playback attempt. D-pad focus was restored after returning to the source picker; no focus requester warning or app crash was observed.
-- Debug compile, 236 unit tests, debug assemble, release compile/assemble, and `git diff --check` passed for the final source.
+- This change passed DEBUG compile and unit tests (252 tests), DEBUG APK assembly, RELEASE compile/assembly, and `git diff --check`.
 
-Smart fallback after resolution or playback failure remains future work.
-
-### PE5 — Recovery / Smart Fallback
-- attempt coordinator
-- failure classes
-- retry / re-resolve / ranked fallback
-- merge existing torrent health fallback
+### PE5 — Smart Fallback V1 — implemented and emulator validated
+- A bounded session reuses the Smart Play ranked snapshot, tries at most five semantic candidates once each, and commits at first visual.
+- Startup failures advance automatically through the existing `startTvPlayback` path; manual source selection and failures after first visual retain normal Error behavior.
+- DEBUG fixture deterministically fails A (container), fails B (source), then loads C through the ordinary player path.
 
 ### PE6 — Episode Continuity + language intent
 - Core binge match first

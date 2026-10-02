@@ -27,6 +27,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
@@ -84,6 +87,7 @@ internal enum class SimPreset(val label: String) {
     Starting("Starting"), Buffering("Buffering"), Playing("Playing normally"),
     Paused("Paused"), Error("Error"), Ended("Ended"),
     IntroActive("Intro active"), OutroActive("Outro active"),
+    OutroWithNext("Outro + Next prompt"),
     NextOutsideWindow("Next available · outside window"), NextPromptVisible("Next prompt visible"),
     NextPromptDismissed("Next prompt dismissed"), EndedWithNext("Ended · next episode"), EndedWithoutNext("Ended · no next episode"),
 }
@@ -117,15 +121,30 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
     var player by remember { mutableStateOf<Player?>(null) }
     var playbackState by remember { mutableStateOf(labState(preset, 120_000L, SIM_DURATION_MS, 600_000L)) }
     var subtitleStyle by remember { mutableStateOf(PlayerSubtitleStyle()) }
+    val realMediaRequester = remember { FocusRequester() }
+    val simulatedModeRequester = remember { FocusRequester() }
+    val openPlayerRequester = remember { FocusRequester() }
+    val presetRequesters = remember { SimPreset.entries.associateWith { FocusRequester() } }
     val simulatedRuntime = remember { MutableStateFlow(PlayerRuntimeState()) }
     val runtime by (player?.runtimeState ?: simulatedRuntime).collectAsState(
         initial = PlayerRuntimeState(),
     )
+    LaunchedEffect(Unit) {
+        runCatching { realMediaRequester.requestFocus() }
+    }
+    LaunchedEffect(mode, inPlayer) {
+        if (!inPlayer) {
+            runCatching {
+                if (mode == LabMode.SimulatedState) presetRequesters.getValue(preset).requestFocus()
+                else realMediaRequester.requestFocus()
+            }
+        }
+    }
     fun applyPreset(next: SimPreset) {
         preset = next
         val presetPosition = when (next) {
             SimPreset.IntroActive -> 100_000L
-            SimPreset.OutroActive -> SIM_CREDITS_START_MS + 30_000L
+            SimPreset.OutroActive, SimPreset.OutroWithNext -> SIM_CREDITS_START_MS + 30_000L
             SimPreset.NextOutsideWindow -> 120_000L
             SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed -> (durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS) - 10_000L
             SimPreset.EndedWithNext, SimPreset.EndedWithoutNext -> durationInput.toLongOrNull()?.coerceAtLeast(0L) ?: SIM_DURATION_MS
@@ -203,7 +222,6 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             }
         }
     }
-
     if (inPlayer) {
         val currentState = if (mode == LabMode.SimulatedState) {
             playbackState.copy(
@@ -242,7 +260,21 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             },
             onSeekTo = { target ->
                 if (mode == LabMode.RealMedia) player?.seekTo(target)
-                else updateRuntime { it.copy(positionMs = target.coerceIn(0L, it.durationMs)) }
+                else {
+                    val segmentType = playbackState.resolvedSegments.firstOrNull { it.endMs == target }?.type?.name?.lowercase()
+                    if (segmentType != null) Log.d("PlaybackLab", "segment-action type=$segmentType targetMs=$target")
+                    Log.d("PlaybackLab", "seek-to targetMs=$target")
+                    updateRuntime {
+                        val seekTarget = target.coerceIn(0L, it.durationMs)
+                        it.copy(
+                            positionMs = seekTarget,
+                            bufferedPositionMs = maxOf(it.bufferedPositionMs, seekTarget),
+                            isPlaying = seekTarget < it.durationMs,
+                            ended = seekTarget >= it.durationMs,
+                        )
+                    }
+                    Log.d("PlaybackLab", "seek-result positionMs=${simulatedRuntime.value.positionMs}")
+                }
             },
             onAudioTrackSelected = { track ->
                 if (mode == LabMode.SimulatedState) updateRuntime {
@@ -285,12 +317,17 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
                         attempt = nextAttempt,
                         stage = TvPlaybackStage.Playing,
                         runtime = newRuntime,
+                        resolvedSegments = emptyList(),
                         nextEpisode = TvNextEpisodeState(
                             playbackAttemptId = nextAttempt?.attemptId,
                             videoId = "lab-s01e08",
                             episodeLabel = "S01E08",
                             title = "The Long Way Home",
                         ),
+                    )
+                    Log.d(
+                        "PlaybackLab",
+                        "attempt-transition from=${old?.attemptId} to=${nextAttempt?.attemptId} resolvedSegments=${playbackState.resolvedSegments.size}",
                     )
                 }
             },
@@ -320,8 +357,8 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
         Text("TV Playback Lab", style = MaterialTheme.typography.headlineMedium, color = TvColors.primaryText)
         Text("Runs the production TV player surface in an isolated debug Activity.", color = TvColors.secondaryText)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Button(onClick = { mode = LabMode.RealMedia }) { Text("Real Media") }
-            Button(onClick = { mode = LabMode.SimulatedState }) { Text("Simulated State") }
+            Button(modifier = Modifier.focusRequester(realMediaRequester), onClick = { mode = LabMode.RealMedia }) { Text("Real Media") }
+            Button(modifier = Modifier.focusRequester(simulatedModeRequester), onClick = { mode = LabMode.SimulatedState }) { Text("Simulated State") }
         }
         if (mode == LabMode.RealMedia) {
             Text("Media source", color = TvColors.primaryText, style = MaterialTheme.typography.titleMedium)
@@ -383,27 +420,64 @@ private fun PlaybackLab(playbackManager: PlaybackManager) {
             }) { Text("Play") }
         } else {
             Text("Preset", color = TvColors.primaryText, style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                SimPreset.entries.take(4).forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
-            }
-            SimPreset.entries.drop(4).chunked(4).forEach { row ->
+            SimPreset.entries.chunked(4).forEachIndexed { rowIndex, row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    row.forEach { state -> Button(onClick = { applyPreset(state) }) { Text(state.label) } }
+                    row.forEachIndexed { columnIndex, state ->
+                        val index = rowIndex * 4 + columnIndex
+                        val rowStart = rowIndex * 4
+                        val rowEnd = rowStart + row.lastIndex
+                        val requester = presetRequesters.getValue(state)
+                        Button(
+                            modifier = Modifier.focusRequester(requester).focusProperties {
+                                left = presetRequesters.getValue(if (index > rowStart) SimPreset.entries[index - 1] else state)
+                                right = presetRequesters.getValue(if (index < rowEnd) SimPreset.entries[index + 1] else state)
+                                up = if (rowIndex > 0) presetRequesters.getValue(SimPreset.entries[index - 4]) else simulatedModeRequester
+                                down = SimPreset.entries.getOrNull(index + 4)?.let(presetRequesters::getValue) ?: openPlayerRequester
+                            },
+                            onClick = { applyPreset(state) },
+                        ) { Text(if (preset == state) "✓ ${state.label}" else state.label) }
+                    }
                 }
             }
+            Button(
+                modifier = Modifier.focusRequester(openPlayerRequester).focusProperties {
+                    up = presetRequesters.getValue(SimPreset.entries.last())
+                    down = presetRequesters.getValue(preset)
+                },
+                onClick = {
+                    applyPreset(preset)
+                    updateRuntime { it.copy(isPlaying = false) }
+                    val attempt = labAttempt("Simulated ${preset.label}")
+                    playbackState = playbackState.copy(attempt = attempt, nextEpisode = playbackState.nextEpisode.copy(playbackAttemptId = attempt.attemptId))
+                    Log.d(
+                        "PlaybackLab",
+                        "attempt-open id=${attempt.attemptId} preset=${preset.name} resolvedSegments=${playbackState.resolvedSegments.size}",
+                    )
+                    player = null
+                    inPlayer = true
+                },
+            ) { Text("Open simulated player") }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(positionInput, { positionInput = it }, label = { Text("Position ms") }, modifier = Modifier.weight(1f))
-                OutlinedTextField(durationInput, { durationInput = it }, label = { Text("Duration ms") }, modifier = Modifier.weight(1f))
-                OutlinedTextField(bufferedInput, { bufferedInput = it }, label = { Text("Buffered ms") }, modifier = Modifier.weight(1f))
+                OutlinedTextField(
+                    positionInput,
+                    { positionInput = it },
+                    label = { Text("Position ms") },
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    durationInput,
+                    { durationInput = it },
+                    label = { Text("Duration ms") },
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedTextField(
+                    bufferedInput,
+                    { bufferedInput = it },
+                    label = { Text("Buffered ms") },
+                    modifier = Modifier.weight(1f),
+                )
             }
             Text("Fake intro: 01:30–02:30 · fake outro starts at 27:00", color = TvColors.secondaryText)
-            Button(onClick = {
-                applyPreset(preset)
-                val attempt = labAttempt("Simulated ${preset.label}")
-                playbackState = playbackState.copy(attempt = attempt, nextEpisode = playbackState.nextEpisode.copy(playbackAttemptId = attempt.attemptId))
-                player = null
-                inPlayer = true
-            }) { Text("Open simulated player") }
         }
         Spacer(Modifier.height(8.dp))
         Text("ADB: adb shell am start -n com.stremio.mobile/.presentation.tv.TvPlaybackLabActivity", color = TvColors.secondaryText)
@@ -426,19 +500,19 @@ private fun labAttempt(label: String) = TvPlaybackAttempt(
 internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, bufferedMs: Long): TvPlaybackUiState {
     val stage = when (preset) {
         SimPreset.Starting -> TvPlaybackStage.Preparing
-        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.IntroActive, SimPreset.OutroActive,
+        SimPreset.Buffering, SimPreset.Playing, SimPreset.Paused, SimPreset.IntroActive, SimPreset.OutroActive, SimPreset.OutroWithNext,
         SimPreset.NextOutsideWindow, SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed -> TvPlaybackStage.Playing
         SimPreset.Error -> TvPlaybackStage.Error
         SimPreset.Ended, SimPreset.EndedWithNext, SimPreset.EndedWithoutNext -> TvPlaybackStage.Ended
     }
     val playing = preset in setOf(
-        SimPreset.Playing, SimPreset.IntroActive, SimPreset.OutroActive, SimPreset.NextOutsideWindow,
+        SimPreset.Playing, SimPreset.IntroActive, SimPreset.OutroActive, SimPreset.OutroWithNext, SimPreset.NextOutsideWindow,
         SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed,
     )
     val buffering = preset == SimPreset.Buffering
     val ended = preset in setOf(SimPreset.Ended, SimPreset.EndedWithNext, SimPreset.EndedWithoutNext)
     val firstVisual = preset !in setOf(SimPreset.Starting, SimPreset.Error)
-    val hasNext = preset in setOf(SimPreset.NextOutsideWindow, SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed, SimPreset.EndedWithNext)
+    val hasNext = preset in setOf(SimPreset.OutroWithNext, SimPreset.NextOutsideWindow, SimPreset.NextPromptVisible, SimPreset.NextPromptDismissed, SimPreset.EndedWithNext)
     val runtime = PlayerRuntimeState(
         isPlaying = playing,
         isBuffering = buffering,
@@ -464,7 +538,7 @@ internal fun labState(preset: SimPreset, positionMs: Long, durationMs: Long, buf
             videoId = "lab-s01e07".takeIf { hasNext },
             episodeLabel = "S01E07".takeIf { hasNext },
             title = "The Next Chapter".takeIf { hasNext },
-            promptVisible = preset == SimPreset.NextPromptVisible,
+            promptVisible = preset in setOf(SimPreset.OutroWithNext, SimPreset.NextPromptVisible),
             dismissed = preset == SimPreset.NextPromptDismissed,
         ),
     )

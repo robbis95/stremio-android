@@ -6,6 +6,8 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.stremio.mobile.presentation.tv.segments.TvContextualPlaybackAction
+import com.stremio.mobile.presentation.tv.segments.tvContextualPlaybackAction
 
 class TvPlaybackLabStateTest {
     @Test
@@ -85,5 +87,17 @@ class TvPlaybackLabStateTest {
         assertTrue(endedWithNext.nextEpisode.available)
         assertEquals(TvPlaybackStage.Ended, endedWithoutNext.stage)
         assertFalse(endedWithoutNext.nextEpisode.available)
+    }
+
+    @Test
+    fun outroWithActionableNextFixtureUsesNextEpisodeAction() {
+        val state = labState(SimPreset.OutroWithNext, 1_650_000L, 1_800_000L, 1_700_000L)
+
+        assertTrue(state.nextEpisode.available)
+        assertTrue(state.nextEpisode.promptVisible)
+        assertEquals(
+            TvContextualPlaybackAction.NextEpisode,
+            tvContextualPlaybackAction(state.resolvedSegments, state.runtime.positionMs, nextEpisodeActionable = true),
+        )
     }
 }

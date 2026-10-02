@@ -173,6 +173,19 @@ class TvSmartStreamSelectorTest {
         assertEquals(Compatibility.Compatible, result.ranked.first().compatibility)
     }
 
+    @Test fun `compatible 4k retains preference on a strong measured network`() {
+        val supported = VideoDecoderCapability(CapabilitySupport.Supported, CapabilitySupport.Supported, CapabilitySupport.Supported)
+        val device = DevicePlaybackCapabilities(supports2160pOutput = true, avc = supported)
+        val network = NetworkPlaybackProfile(estimatedThroughputBps = 100_000_000, estimateSource = NetworkEstimateSource.Media3Measured, confidence = NetworkEstimateConfidence.High)
+        val streams = listOf(
+            option("1080", "1080p", StreamSourceKind.Direct).copy(name = "1080p AVC", videoSize = 100_000_000),
+            option("4k", "2160p", StreamSourceKind.Direct).copy(name = "2160p AVC", videoSize = 300_000_000),
+        )
+        val result = TvSmartStreamSelector.select(streams, "2160p", device, network, durationSeconds = 100)
+        assertEquals("4k", result.selected?.semanticKey)
+        assertEquals(NetworkSustainability.Comfortable, result.ranked.first().network)
+    }
+
     @Test fun `physical supported modes can establish 4k despite current 1080 mode`() {
         val (current, max) = physicalDisplaySnapshotForModes(intArrayOf(1920, 1080), listOf(intArrayOf(1920, 1080), intArrayOf(3840, 2160)))
         assertEquals("1920x1080", "${current?.get(0)}x${current?.get(1)}")

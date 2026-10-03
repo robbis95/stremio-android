@@ -248,6 +248,7 @@ internal fun TvStreamsScreen(
                     } ?: requester
                     TvSourceRow(
                         option = option,
+                        durationSeconds = target.durationSeconds,
                         selected = state.selectedStreamKey == option.semanticKey,
                         recommended = state.recommendedStreamKey == option.semanticKey,
                         modifier = Modifier
@@ -317,9 +318,9 @@ private data class TvStreamsDebugAction(
 )
 
 @Composable
-private fun TvSourceRow(option: StreamOption, selected: Boolean, recommended: Boolean, modifier: Modifier = Modifier) {
+private fun TvSourceRow(option: StreamOption, durationSeconds: Long?, selected: Boolean, recommended: Boolean, modifier: Modifier = Modifier) {
     var focused by remember(option.semanticKey) { mutableStateOf(false) }
-    val metadata = remember(option) { parseStreamVideoMetadata(option) }
+    val metadata = remember(option, durationSeconds) { parseStreamVideoMetadata(option, durationSeconds) }
     val title = safeStreamPresentationText(option.name)
     val technical = listOfNotNull(
         metadata.quality.takeUnless { it == "unknown" }?.uppercase(),

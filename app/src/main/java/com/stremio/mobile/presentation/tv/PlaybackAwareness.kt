@@ -159,6 +159,29 @@ internal fun isRemoteNetworkUri(value: String): Boolean {
     return host != "localhost" && host != "::1" && host != "[::1]" && !host.startsWith("127.") && host != "0.0.0.0"
 }
 
+/** Parses only a duration explicitly supplied by Core metadata; a missing/unrecognized value stays unknown. */
+internal fun parseTrustedDurationSeconds(value: String?): Long? {
+    val runtime = value?.trim()?.lowercase(Locale.ROOT)?.takeIf(String::isNotEmpty) ?: return null
+    val seconds = when {
+        Regex("^\\d{1,2}:\\d{1,2}:\\d{2}$").matches(runtime) -> {
+            val parts = runtime.split(':').map(String::toLong)
+            parts[0] * 3600 + parts[1] * 60 + parts[2]
+        }
+        Regex("^\\d{1,3}:\\d{2}$").matches(runtime) -> {
+            val parts = runtime.split(':').map(String::toLong)
+            parts[0] * 60 + parts[1]
+        }
+        else -> {
+            val hours = Regex("(\\d+)\\s*(?:h|hr|hrs|hour|hours)\\b").find(runtime)?.groupValues?.get(1)?.toLongOrNull() ?: 0L
+            val minutes = Regex("(\\d+)\\s*(?:m|min|mins|minute|minutes)\\b").find(runtime)?.groupValues?.get(1)?.toLongOrNull()
+                ?: runtime.toLongOrNull()
+                ?: return null
+            hours * 3600 + minutes * 60
+        }
+    }
+    return seconds.takeIf { it in 1..(24 * 60 * 60) }
+}
+
 internal fun parseStreamVideoMetadata(option: StreamOption, durationSeconds: Long? = null): StreamVideoMetadata {
     // Stream text is untrusted addon presentation data. Remove URLs before parsing or displaying labels.
     val safeTextParts = listOfNotNull(

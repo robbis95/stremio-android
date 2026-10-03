@@ -303,6 +303,14 @@ class TvSmartStreamSelectorTest {
         assertEquals(5.58, metadata.bitrateMbps!!, 0.02)
     }
 
+    @Test fun `duration is parsed only from supplied runtime metadata`() {
+        assertEquals(6_060L, parseTrustedDurationSeconds("101 min"))
+        assertEquals(6_060L, parseTrustedDurationSeconds("1h 41m"))
+        assertEquals(6_060L, parseTrustedDurationSeconds("01:41:00"))
+        assertNull(parseTrustedDurationSeconds(null))
+        assertNull(parseTrustedDurationSeconds("unknown"))
+    }
+
     @Test fun `missing metadata stays absent and addon title is not parsed as stream data`() {
         val metadata = parseStreamVideoMetadata(option("missing", null, provider = "4K WEB-DL Atmos 5.1"))
         assertEquals("unknown", metadata.quality)

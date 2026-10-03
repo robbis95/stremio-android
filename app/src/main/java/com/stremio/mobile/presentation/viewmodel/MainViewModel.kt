@@ -86,6 +86,7 @@ import com.stremio.mobile.presentation.tv.NetworkPlaybackHistory
 import com.stremio.mobile.presentation.tv.networkSnapshot
 import com.stremio.mobile.presentation.tv.parseStreamVideoMetadata
 import com.stremio.mobile.presentation.tv.safeStreamPresentationText
+import com.stremio.mobile.presentation.tv.parseTrustedDurationSeconds
 import com.stremio.mobile.presentation.tv.tvSmartResultApplies
 import com.stremio.mobile.presentation.tv.tvSmartShouldFinish
 import com.stremio.mobile.presentation.tv.TvValidationFixtures
@@ -2055,9 +2056,20 @@ class MainViewModel internal constructor(
     }
 
     /** TV-only source discovery. It deliberately avoids mobile openStreams/remembered autoplay. */
-    internal fun openTvStreams(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = false)
+    internal fun openTvStreams(target: TvStreamTarget) = discoverTvStreams(target.withTrustedDuration(), smartPlay = false)
 
-    internal fun playTvSmart(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = true)
+    internal fun playTvSmart(target: TvStreamTarget) = discoverTvStreams(target.withTrustedDuration(), smartPlay = true)
+
+    private fun TvStreamTarget.withTrustedDuration(): TvStreamTarget = copy(
+        durationSeconds = durationSeconds ?: selectedContentDurationSeconds(this),
+    )
+
+    private fun selectedContentDurationSeconds(target: TvStreamTarget): Long? {
+        val details = selectedDetails.value ?: return null
+        if (details.item.id != target.contentId || details.item.type != target.contentType) return null
+        return details.runtime?.let(::parseTrustedDurationSeconds)
+            ?: details.item.runtime?.let(::parseTrustedDurationSeconds)
+    }
 
     private fun discoverTvStreams(target: TvStreamTarget, smartPlay: Boolean) {
         val discoveryStartedNanos = SystemClock.elapsedRealtimeNanos()
@@ -2192,7 +2204,7 @@ class MainViewModel internal constructor(
                                 incoming.duplicateSemanticKeyCount,
                             )
                             auditOptions.forEachIndexed { index, option ->
-                                val metadata = parseStreamVideoMetadata(option)
+                                val metadata = parseStreamVideoMetadata(option, target.durationSeconds)
                                 val stream = option.core.stream
                                 val hints = stream.behaviorHints
                                 val bitrate = metadata.bitrateMbps?.let {
@@ -2319,7 +2331,7 @@ class MainViewModel internal constructor(
         val networkElapsedMs = (SystemClock.elapsedRealtimeNanos() - networkStartedNanos) / 1_000_000L
         val rankingStartedNanos = SystemClock.elapsedRealtimeNanos()
         val result = TvSmartStreamSelector.select(state.options, preferredQuality.value, deviceCaps, networkProfile,
-            selectedDetails.value?.runtime?.let(::runtimeSeconds))
+            target.durationSeconds ?: selectedContentDurationSeconds(target))
         val rankingElapsedMs = (SystemClock.elapsedRealtimeNanos() - rankingStartedNanos) / 1_000_000L
         val selectorReturnedNanos = SystemClock.elapsedRealtimeNanos()
         tvStartupTrace = tvStartupTrace?.copy(selectorReturnedNanos = selectorReturnedNanos)
@@ -2364,11 +2376,6 @@ class MainViewModel internal constructor(
     }
 
     private fun displaySize(width: Int?, height: Int?) = if (width == null || height == null) "unknown" else "${width}x$height"
-    private fun runtimeSeconds(runtime: String): Long? {
-        val parts = runtime.trim().split(":").mapNotNull(String::toLongOrNull)
-        return when (parts.size) { 1 -> parts[0] * 60; 2 -> parts[0] * 60 + parts[1]; 3 -> parts[0] * 3600 + parts[1] * 60 + parts[2]; else -> null }
-    }
-
     internal fun playTvSmartValidationFixture() {
         tvStreamsJob?.cancel(); tvStreamsJob = null
         tvSmartSettleJob?.cancel(); tvSmartSettleJob = null

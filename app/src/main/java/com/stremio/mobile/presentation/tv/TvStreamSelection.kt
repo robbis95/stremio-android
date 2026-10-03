@@ -130,6 +130,7 @@ internal data class TvStreamTarget(
     val episodeLabel: String? = null,
     val releaseDate: String? = null,
     val guessStreamPath: Boolean,
+    val durationSeconds: Long? = null,
 ) {
     val semanticTargetKey: String = listOf(contentType, contentId, videoId ?: "guess")
         .joinToString(":")
@@ -178,6 +179,7 @@ internal fun nextEpisodeTarget(
             ) else null
         },
         guessStreamPath = false,
+        durationSeconds = null,
     )
 
 internal fun preferredNextEpisodeOption(options: List<StreamOption>, previous: StreamOption?): StreamOption? =

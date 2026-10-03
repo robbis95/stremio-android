@@ -54,6 +54,8 @@ import com.stremio.mobile.presentation.tv.TvPlaybackUiState
 import com.stremio.mobile.presentation.tv.TvPlaybackAttempt
 import com.stremio.mobile.presentation.tv.TvPlaybackStage
 import com.stremio.mobile.presentation.tv.TvPlaybackTiming
+import com.stremio.mobile.presentation.tv.TvStartupTrace
+import com.stremio.mobile.presentation.tv.safeTvStartupSummary
 import com.stremio.mobile.presentation.tv.TvPlaybackFailureReason
 import com.stremio.mobile.presentation.tv.TvSmartPlaybackSession
 import com.stremio.mobile.presentation.tv.tvSmartFallbackNextCandidateIndex
@@ -127,6 +129,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -134,6 +137,7 @@ import org.json.JSONObject
 private const val TV_SMART_SETTLE_MS = 1_300L
 private const val TV_SMART_MAX_DISCOVERY_MS = 5_000L
 private const val TV_SMART_STARTUP_TIMEOUT_MS = 45_000L
+private const val TV_DETAILS_PREVIEW_ACTION_FALLBACK_MS = 8_000L
 
 class MainViewModel internal constructor(
     private val authRepository: AuthRepository,
@@ -152,7 +156,7 @@ class MainViewModel internal constructor(
     private val tvNextVideoProvider = tvNextVideoProvider ?: CoreTvNextVideoProvider { playbackRepository.getNextVideo() }
     private val appContext = appContext.applicationContext
     private val playbackNetworkHistory = NetworkPlaybackHistory(this.appContext)
-    private val tvDeviceCapabilitySnapshots = mutableMapOf<Boolean, com.stremio.mobile.presentation.tv.DevicePlaybackCapabilities>()
+    private val tvDeviceCapabilitySnapshots = java.util.concurrent.ConcurrentHashMap<Boolean, com.stremio.mobile.presentation.tv.DevicePlaybackCapabilities>()
     private val latestIntentUri = MutableStateFlow<String?>(null)
     private val account = MutableStateFlow(authRepository.accountFromCore())
     val tvAccount: StateFlow<AccountUiState> = account.asStateFlow()
@@ -186,11 +190,14 @@ class MainViewModel internal constructor(
     private var tvReusePendingAttemptId: String? = null
     private var tvPlaybackMonitorJob: Job? = null
     private var tvStartupTimeoutJob: Job? = null
+    private var tvTorrentStartupStatsJob: Job? = null
     private var tvSmartPlaybackSession: TvSmartPlaybackSession? = null
+    private var tvStartupTrace: TvStartupTrace? = null
     private var tvSegmentProviderJob: Job? = null
     private var latestTvCorePlayer: com.stremio.core.models.Player? = null
     private val tvSegmentCoordinator = TvSegmentCoordinator()
     private var tvStreamsJob: Job? = null
+    private val tvDeviceCapabilityWarmups = mutableMapOf<Boolean, Job>()
     private var tvSmartSettleJob: Job? = null
     private var tvSmartMaximumJob: Job? = null
     private var tvNextEpisodeJob: Job? = null
@@ -201,6 +208,7 @@ class MainViewModel internal constructor(
     private val tvStreamReadyOrder = mutableMapOf<String, LinkedHashSet<String>>()
     private val auditedTvStreamTargets = mutableSetOf<String>()
     private var detailsLibraryOverride: Boolean? = null
+    private var detailsActivatedNanos: Long? = null
     private var detailsLibraryActionJob: Job? = null
     private var isDetailsLibraryActionLoading = false
     private var hasAuthoritativeLibraryMembership = false
@@ -1936,12 +1944,16 @@ class MainViewModel internal constructor(
     }
 
     fun openDetails(item: CatalogItem) {
+        val activatedNanos = SystemClock.elapsedRealtimeNanos()
+        detailsActivatedNanos = activatedNanos
+        if (BuildConfig.DEBUG) Log.d("TvDetailsTrace", "phase=activation trace=$activatedNanos elapsedRealtimeNanos=$activatedNanos")
         detailsJob?.cancel()
         detailsLibraryActionJob?.cancel()
         isDetailsLibraryActionLoading = false
         detailsLibraryOverride = null
         _tvDetailsUiState.value = TvDetailsUiState(
             details = detailsWhileLoading(item),
+            detailsActivatedNanos = activatedNanos,
             isInLibrary = isDetailsItemInLibrary(
                 item = item,
                 libraryItems = library.value.items,
@@ -1950,59 +1962,92 @@ class MainViewModel internal constructor(
         )
         selectedDetails.value = detailsWhileLoading(item)
         detailsJob = viewModelScope.launch {
+            var previewFallbackActivated = false
+            val previewFallbackJob = launch {
+                delay(TV_DETAILS_PREVIEW_ACTION_FALLBACK_MS)
+                if (
+                    detailsActivatedNanos == activatedNanos &&
+                    selectedDetails.value?.item?.let { it.id == item.id && it.type == item.type } == true &&
+                    selectedDetails.value?.isLoading == true
+                ) {
+                    previewFallbackActivated = true
+                    publishTvDetails(detailsWhileLoading(item).copy(isLoading = false))
+                    if (BuildConfig.DEBUG) {
+                        Log.w(
+                            "TvDetailsTrace",
+                            "phase=preview-actions-unblocked trace=$activatedNanos elapsedMs=${(SystemClock.elapsedRealtimeNanos() - activatedNanos) / 1_000_000}",
+                        )
+                    }
+                }
+            }
             try {
+                var lastLoggedPhase: String? = null
                 catalogRepository.getMetaDetailsFlow(type = item.type, id = item.id, videoId = null, guessStreamPath = false)
                     .collect { details ->
-                    val metaItem = details.metaItem
-                    if (metaItem == null) {
-                        publishTvDetails(detailsWhileLoading(item))
-                        return@collect
-                    }
-                    when (val content = metaItem.content) {
-                        is com.stremio.core.models.LoadableMetaItem.Content.Loading -> {
-                            publishTvDetails(detailsWhileLoading(item))
+                        val content = details.metaItem?.content
+                        val phase = when (content) {
+                            null -> "meta-pending"
+                            is com.stremio.core.models.LoadableMetaItem.Content.Loading -> "meta-loading"
+                            is com.stremio.core.models.LoadableMetaItem.Content.Ready -> "meta-ready"
+                            is com.stremio.core.models.LoadableMetaItem.Content.Error -> "meta-error"
                         }
-                        is com.stremio.core.models.LoadableMetaItem.Content.Error -> {
-                            publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = content.value.message))
+                        if (BuildConfig.DEBUG && phase != lastLoggedPhase) {
+                            lastLoggedPhase = phase
+                            Log.d(
+                                "TvDetailsTrace",
+                                "phase=$phase trace=$activatedNanos elapsedMs=${(SystemClock.elapsedRealtimeNanos() - activatedNanos) / 1_000_000} providerStates=${details.streams.size}",
+                            )
                         }
-                        is com.stremio.core.models.LoadableMetaItem.Content.Ready -> {
-                            val meta = content.value
-                            if (meta.id != item.id || meta.type != item.type) return@collect
-                            if (BuildConfig.DEBUG && auditedTvDetailsIds.add("${meta.type}:${meta.id}") && meta.videos.isNotEmpty()) {
-                                val videos = meta.videos
-                                val progress = videos.mapNotNull { it.progress }
-                                Timber.tag("TvMetaDetailsAudit").d(
-                                    "%s videos=%d seasons=%s missingSeriesInfo=%d specials=%s thumbnails=%d overviews=%d released=%d upcoming=%d watched=%d current=%d progressCount=%d progressValues=%s progressRange=%s embeddedStreams=%d videosWithStreams=%d",
-                                    meta.id,
-                                    videos.size,
-                                    videos.mapNotNull { it.seriesInfo?.season }.distinct().sorted(),
-                                    videos.count { it.seriesInfo == null },
-                                    videos.any { it.seriesInfo?.season == 0L },
-                                    videos.count { !it.thumbnail.isNullOrBlank() },
-                                    videos.count { !it.overview.isNullOrBlank() },
-                                    videos.count { it.released != null },
-                                    videos.count { it.upcoming },
-                                    videos.count { it.watched },
-                                    videos.count { it.currentVideo },
-                                    progress.size,
-                                    progress.distinct().sorted(),
-                                    if (progress.isEmpty()) "none" else "${progress.minOrNull()}..${progress.maxOrNull()}",
-                                    videos.sumOf { it.streams.size },
-                                    videos.count { it.streams.isNotEmpty() },
-                                )
+                        val metaItem = details.metaItem
+                        if (metaItem == null) {
+                            publishTvDetails(detailsWhileLoading(item).copy(isLoading = !previewFallbackActivated))
+                            return@collect
+                        }
+                        when (val metaContent = metaItem.content) {
+                            is com.stremio.core.models.LoadableMetaItem.Content.Loading -> {
+                                publishTvDetails(detailsWhileLoading(item).copy(isLoading = !previewFallbackActivated))
                             }
-                            val trailer = meta.trailerStreams.firstOrNull()?.let { catalogRepository.directUrl(it) }
-                            publishTvDetails(meta.toMetaDetails(item, trailer))
+                            is com.stremio.core.models.LoadableMetaItem.Content.Error -> {
+                                publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = metaContent.value.message))
+                            }
+                            is com.stremio.core.models.LoadableMetaItem.Content.Ready -> {
+                                val meta = metaContent.value
+                                if (meta.id != item.id || meta.type != item.type) return@collect
+                                if (BuildConfig.DEBUG && auditedTvDetailsIds.add("${meta.type}:${meta.id}") && meta.videos.isNotEmpty()) {
+                                    val videos = meta.videos
+                                    val progress = videos.mapNotNull { it.progress }
+                                    Timber.tag("TvMetaDetailsAudit").d(
+                                        "%s videos=%d seasons=%s missingSeriesInfo=%d specials=%s thumbnails=%d overviews=%d released=%d upcoming=%d watched=%d current=%d progressCount=%d progressValues=%s progressRange=%s embeddedStreams=%d videosWithStreams=%d",
+                                        meta.id,
+                                        videos.size,
+                                        videos.mapNotNull { it.seriesInfo?.season }.distinct().sorted(),
+                                        videos.count { it.seriesInfo == null },
+                                        videos.any { it.seriesInfo?.season == 0L },
+                                        videos.count { !it.thumbnail.isNullOrBlank() },
+                                        videos.count { !it.overview.isNullOrBlank() },
+                                        videos.count { it.released != null },
+                                        videos.count { it.upcoming },
+                                        videos.count { it.watched },
+                                        videos.count { it.currentVideo },
+                                        progress.size,
+                                        progress.distinct().sorted(),
+                                        if (progress.isEmpty()) "none" else "${progress.minOrNull()}..${progress.maxOrNull()}",
+                                        videos.sumOf { it.streams.size },
+                                        videos.count { it.streams.isNotEmpty() },
+                                    )
+                                }
+                                val trailer = meta.trailerStreams.firstOrNull()?.let { catalogRepository.directUrl(it) }
+                                publishTvDetails(meta.toMetaDetails(item, trailer))
+                            }
+                            else -> publishTvDetails(detailsWhileLoading(item).copy(isLoading = !previewFallbackActivated))
                         }
-                        else -> {
-                            publishTvDetails(detailsWhileLoading(item))
-                        }
-                    }
                     }
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
                 publishTvDetails(detailsWhileLoading(item).copy(isLoading = false, error = error.message ?: "MetaDetails request failed"))
+            } finally {
+                previewFallbackJob.cancel()
             }
         }
     }
@@ -2013,6 +2058,13 @@ class MainViewModel internal constructor(
     internal fun playTvSmart(target: TvStreamTarget) = discoverTvStreams(target, smartPlay = true)
 
     private fun discoverTvStreams(target: TvStreamTarget, smartPlay: Boolean) {
+        val discoveryStartedNanos = SystemClock.elapsedRealtimeNanos()
+        warmTvDeviceCapabilities()
+        tvStartupTrace = TvStartupTrace(
+            userActivatedNanos = discoveryStartedNanos,
+            discoveryStartedNanos = discoveryStartedNanos,
+        )
+        if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T1-discovery-started trace=${tvStartupTrace?.traceId} elapsedRealtimeNanos=$discoveryStartedNanos smartPlay=$smartPlay")
         tvSmartPlaybackSession = null
         tvSmartSettleJob?.cancel()
         tvSmartMaximumJob?.cancel()
@@ -2032,6 +2084,7 @@ class MainViewModel internal constructor(
         }
         tvStreamsJob = viewModelScope.launch {
             try {
+                var lastDiscoverySignature: String? = null
                 tvValidationFixtures?.optionsFor(target)?.let { options ->
                     if (_tvStreamSelection.value.target?.semanticTargetKey == target.semanticTargetKey) {
                         val selectedKey = keepSelectionIfPresent(previous?.selectedStreamKey, options) ?: options.first().semanticKey
@@ -2053,8 +2106,56 @@ class MainViewModel internal constructor(
                     guessStreamPath = target.guessStreamPath,
                 ).collect { details ->
                     if (_tvStreamSelection.value.target?.semanticTargetKey != target.semanticTargetKey) return@collect
-                    if (!tvStreamTargetMatches(details, target)) return@collect
+                    if (!tvStreamTargetMatches(details, target)) {
+                        if (BuildConfig.DEBUG) {
+                            val selected = details.selected
+                            val path = selected?.streamPath
+                            val metaMatches = selected?.metaPath?.let { it.type == target.contentType && it.id == target.contentId } ?: false
+                            val guessMatches = selected?.guessStreamPath == target.guessStreamPath
+                            val pathResource = path?.resource ?: "none"
+                            val pathTypeMatches = path?.type == target.contentType
+                            val expectedPathId = target.videoId ?: target.contentId
+                            val pathIdMatches = path?.id == expectedPathId
+                            val rejectedEmission = mapTvStreamEmission(details)
+                            val providerStates = rejectedEmission.providers.joinToString(",") {
+                                "${it.title.take(48)}:${it.status.name.lowercase()}:${it.readyStreamCount}"
+                            }
+                            val signature = "target-drop|selected=${selected != null}|meta=$metaMatches|guess=$guessMatches|path=$pathResource|pathType=$pathTypeMatches|pathId=$pathIdMatches|providers=$providerStates|mapped=${rejectedEmission.options.size}|duplicates=${rejectedEmission.duplicateSemanticKeyCount}"
+                            if (signature != lastDiscoverySignature) {
+                                lastDiscoverySignature = signature
+                                Log.d(
+                                    "TvStreamDiscovery",
+                                    "target=${target.contentType} videoIdPresent=${target.videoId != null} guessStreamPath=${target.guessStreamPath} " +
+                                        "drop=target-match selected=${selected != null} metaIdentityMatch=$metaMatches guessMatch=$guessMatches " +
+                                        "streamPathResource=$pathResource streamPathTypeMatch=$pathTypeMatches streamPathIdMatch=$pathIdMatches " +
+                                        "requestCount=${rejectedEmission.providers.size} providerStates=$providerStates " +
+                                        "coreReadyStreams=${rejectedEmission.providers.sumOf { it.readyStreamCount }} mappedStreams=${rejectedEmission.options.size} " +
+                                        "duplicates=${rejectedEmission.duplicateSemanticKeyCount} torrents=${sourceKindCount(rejectedEmission.options, StreamSourceKind.Torrent)} " +
+                                        "direct=${sourceKindCount(rejectedEmission.options, StreamSourceKind.Direct)}",
+                                )
+                            }
+                        }
+                        return@collect
+                    }
                     val incoming = mapTvStreamEmission(details)
+                    if (BuildConfig.DEBUG) {
+                        val coreReadyStreams = incoming.providers.sumOf { it.readyStreamCount }
+                        val providerStates = incoming.providers.joinToString(",") {
+                            "${it.title.take(48)}:${it.status.name.lowercase()}:${it.readyStreamCount}"
+                        }
+                        val signature = "matched|$providerStates|${incoming.options.size}|${incoming.duplicateSemanticKeyCount}|${incoming.isLoading}"
+                        if (signature != lastDiscoverySignature) {
+                            lastDiscoverySignature = signature
+                            Log.d(
+                                "TvStreamDiscovery",
+                                "target=${target.contentType} videoIdPresent=${target.videoId != null} requestCount=${incoming.providers.size} " +
+                                    "providerStates=$providerStates coreReadyStreams=$coreReadyStreams mappedStreams=${incoming.options.size} " +
+                                    "duplicates=${incoming.duplicateSemanticKeyCount} torrents=${sourceKindCount(incoming.options, StreamSourceKind.Torrent)} " +
+                                    "direct=${sourceKindCount(incoming.options, StreamSourceKind.Direct)} external=${sourceKindCount(incoming.options, StreamSourceKind.External)} " +
+                                    "loading=${incoming.isLoading}",
+                            )
+                        }
+                    }
                     if (BuildConfig.DEBUG) {
                         val readyOrder = tvStreamReadyOrder.getOrPut(target.semanticTargetKey) { linkedSetOf() }
                         incoming.providers.filter { it.status == TvProviderLoadStatus.Ready }.forEach { readyOrder += it.title }
@@ -2116,6 +2217,19 @@ class MainViewModel internal constructor(
                     val current = _tvStreamSelection.value
                     val sameTarget = current.target?.semanticTargetKey == target.semanticTargetKey
                     val options = if (sameTarget) stableInteractionOptions(current.options, incoming.options) else incoming.options
+                    if (options.isNotEmpty()) {
+                        val trace = tvStartupTrace
+                        if (trace != null) {
+                            val firstCandidateNanos = trace.firstCandidateNanos ?: SystemClock.elapsedRealtimeNanos()
+                            tvStartupTrace = trace.copy(
+                                firstCandidateNanos = firstCandidateNanos,
+                                candidateCount = options.size,
+                            )
+                            if (trace.firstCandidateNanos == null && BuildConfig.DEBUG) {
+                                Log.d("TvPlaybackTrace", "phase=T2-first-candidate trace=${trace.traceId} elapsedRealtimeNanos=$firstCandidateNanos count=${options.size}")
+                            }
+                        }
+                    }
                     val selectedProvider = selectProviderLocally(incoming.providers, current.selectedProvider)
                     _tvStreamSelection.value = current.copy(
                         options = options,
@@ -2152,12 +2266,18 @@ class MainViewModel internal constructor(
         val state = _tvStreamSelection.value
         if (!tvSmartResultApplies(state.target, target, state.smartSelecting)) return
         val complete = trigger in setOf("all-complete", "flow-complete", "debug-fixture", "discovery-error")
+        val selectionNanos = SystemClock.elapsedRealtimeNanos()
         val elapsed = when (trigger) {
             "settled" -> TV_SMART_SETTLE_MS
             "maximum-window" -> TV_SMART_MAX_DISCOVERY_MS
             else -> 0L
         }
         if (!complete && !tvSmartShouldFinish(false, elapsed, state.options.isNotEmpty())) return
+        tvStartupTrace = tvStartupTrace?.copy(
+            candidateSnapshotNanos = selectionNanos,
+            candidateCount = state.options.size,
+        )
+        if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T3-candidate-snapshot trace=${tvStartupTrace?.traceId} elapsedRealtimeNanos=$selectionNanos candidates=${state.options.size} trigger=$trigger")
         tvSmartSettleJob?.cancel(); tvSmartSettleJob = null
         tvSmartMaximumJob?.cancel(); tvSmartMaximumJob = null
         if (trigger == "settled" || trigger == "maximum-window") {
@@ -2165,12 +2285,23 @@ class MainViewModel internal constructor(
             tvStreamsJob = null
         }
         val hardwareDecoding = profileSettings.value?.hardwareDecoding ?: true
-        val deviceCaps = tvDeviceCapabilitySnapshots.getOrPut(hardwareDecoding) {
-            AndroidPlaybackCapabilities.collect(appContext, hardwareDecoding)
+        val capabilityStartedNanos = SystemClock.elapsedRealtimeNanos()
+        val cachedCapabilities = tvDeviceCapabilitySnapshots[hardwareDecoding]
+        val deviceCaps = cachedCapabilities ?: AndroidPlaybackCapabilities.collect(appContext, hardwareDecoding).also {
+            tvDeviceCapabilitySnapshots[hardwareDecoding] = it
         }
+        val capabilityElapsedMs = (SystemClock.elapsedRealtimeNanos() - capabilityStartedNanos) / 1_000_000L
+        val networkStartedNanos = SystemClock.elapsedRealtimeNanos()
         val networkProfile = networkSnapshot(appContext, playbackNetworkHistory)
+        val networkElapsedMs = (SystemClock.elapsedRealtimeNanos() - networkStartedNanos) / 1_000_000L
+        val rankingStartedNanos = SystemClock.elapsedRealtimeNanos()
         val result = TvSmartStreamSelector.select(state.options, preferredQuality.value, deviceCaps, networkProfile,
             selectedDetails.value?.runtime?.let(::runtimeSeconds))
+        val rankingElapsedMs = (SystemClock.elapsedRealtimeNanos() - rankingStartedNanos) / 1_000_000L
+        val selectorReturnedNanos = SystemClock.elapsedRealtimeNanos()
+        tvStartupTrace = tvStartupTrace?.copy(selectorReturnedNanos = selectorReturnedNanos)
+        if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T4-selector-returned trace=${tvStartupTrace?.traceId} elapsedRealtimeNanos=$selectorReturnedNanos selected=${result.selected != null}")
+        if (BuildConfig.DEBUG) Log.d("TvStartup", "phase=selector-inputs target=${target.contentType} capabilitySource=${if (cachedCapabilities == null) "synchronous" else "warm-cache"} capabilityMs=$capabilityElapsedMs networkMs=$networkElapsedMs rankMs=$rankingElapsedMs")
         if (BuildConfig.DEBUG) {
             Timber.tag("TvPlaybackCaps").d("displayCurrent=%s displayMax=%s supports2160p=%s avc4k=%s hevc4k=%s av1_4k=%s vp9_4k=%s hdr10=%s hdr10Plus=%s dolbyVision=%s hlg=%s",
                 displaySize(deviceCaps.currentDisplayWidth, deviceCaps.currentDisplayHeight), displaySize(deviceCaps.maxDisplayWidth, deviceCaps.maxDisplayHeight), deviceCaps.supports2160pOutput,
@@ -2193,6 +2324,20 @@ class MainViewModel internal constructor(
                 selectedStreamKey = result.selected.semanticKey, isLoading = false)
             startTvPlayback(target, result.selected, smartSessionIndex = 0)
         } else _tvStreamSelection.value = state.copy(smartSelecting = false, isLoading = false)
+    }
+
+    private fun warmTvDeviceCapabilities() {
+        val hardwareDecoding = profileSettings.value?.hardwareDecoding ?: true
+        if (tvDeviceCapabilitySnapshots.containsKey(hardwareDecoding) || tvDeviceCapabilityWarmups[hardwareDecoding]?.isActive == true) return
+        tvDeviceCapabilityWarmups[hardwareDecoding] = viewModelScope.launch(Dispatchers.Default) {
+            val startedNanos = SystemClock.elapsedRealtimeNanos()
+            val capabilities = AndroidPlaybackCapabilities.collect(appContext, hardwareDecoding)
+            tvDeviceCapabilitySnapshots.putIfAbsent(hardwareDecoding, capabilities)
+            if (BuildConfig.DEBUG) {
+                val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedNanos) / 1_000_000L
+                Log.d("TvStartup", "phase=capabilities-prewarm-complete elapsedMs=$elapsedMs")
+            }
+        }
     }
 
     private fun displaySize(width: Int?, height: Int?) = if (width == null || height == null) "unknown" else "${width}x$height"
@@ -2261,6 +2406,7 @@ class MainViewModel internal constructor(
         tvPlaybackJob?.cancel()
         tvPlaybackMonitorJob?.cancel()
         tvStartupTimeoutJob?.cancel()
+        tvTorrentStartupStatsJob?.cancel(); tvTorrentStartupStatsJob = null
         tvSegmentProviderJob?.cancel()
         latestTvCorePlayer = null
         val heldExoForReuse = reuseExistingExo && playbackRepository.getPlayer()?.engine == PlayerEngine.EXO
@@ -2279,6 +2425,11 @@ class MainViewModel internal constructor(
         ) ?: configuredEngine
         val serverRequired = streamRequiresLocalServer(option.core.stream)
         val attempt = TvPlaybackAttempt.create(target, option, requestedEngine, SystemClock.elapsedRealtimeNanos())
+        val startup = tvStartupTrace ?: TvStartupTrace(userActivatedNanos = attempt.startedAtNanos)
+        tvStartupTrace = startup.copy(
+            attemptCount = startup.attemptCount + 1,
+            winningRank = smartSessionIndex?.plus(1) ?: startup.winningRank,
+        )
         if (smartSession != null) {
             tvSmartPlaybackSession = smartSession.start(smartSessionIndex!!, attempt.attemptId) ?: return
         }
@@ -2303,12 +2454,20 @@ class MainViewModel internal constructor(
             option = option,
             stage = TvPlaybackStage.Resolving,
             requestedEngine = requestedEngine,
-            timing = TvPlaybackTiming(userSourceActivatedNanos = attempt.startedAtNanos),
+            timing = TvPlaybackTiming(
+                userSourceActivatedNanos = attempt.startedAtNanos,
+                userPlayActivatedNanos = startup.userActivatedNanos,
+                discoveryStartedNanos = startup.discoveryStartedNanos,
+                firstCandidateNanos = startup.firstCandidateNanos,
+                candidateSnapshotNanos = startup.candidateSnapshotNanos,
+                selectorReturnedNanos = startup.selectorReturnedNanos,
+            ),
             nextEpisode = nextEpisodeStateFor(attempt.attemptId, target),
             fallbackProgress = if (smartSessionIndex != null && smartSessionIndex > 0)
                 "Source ${smartSessionIndex + 1} of ${smartSession?.rankedCandidates?.size ?: 0}" else null,
         )
         lastTvTimeReportNanos = 0L
+        if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T5-source-activated trace=${tvStartupTrace?.traceId} attempt=${attempt.attemptId} elapsedRealtimeNanos=${attempt.startedAtNanos}")
         Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "source-activated", server = if (serverRequired) "pending" else "not-required"))
         if (smartSessionIndex != null && BuildConfig.DEBUG) {
             val seeds = option.seeds?.filter(Char::isDigit)?.toIntOrNull()?.let { if (it >= 100) "100+" else it.toString() } ?: "unknown"
@@ -2328,6 +2487,8 @@ class MainViewModel internal constructor(
                     val previous = safeServerState(serverController.state.value)
                     val startedAt = SystemClock.elapsedRealtimeNanos()
                     _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "start-started")
+                    _tvPlayback.value = _tvPlayback.value.copy(timing = _tvPlayback.value.timing.copy(serverStartRequestedNanos = startedAt))
+                    if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T6-server-start-requested trace=${tvStartupTrace?.traceId} attempt=${attempt.attemptId} elapsedRealtimeNanos=$startedAt")
                     Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "server-start-started", server = "start-started previous=$previous"))
                     try {
                         startServerInternal()
@@ -2343,7 +2504,11 @@ class MainViewModel internal constructor(
                     }
                     val elapsedMs = (SystemClock.elapsedRealtimeNanos() - startedAt) / 1_000_000
                     val resulting = safeServerState(serverController.state.value)
-                    _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "ready")
+                    _tvPlayback.value = _tvPlayback.value.copy(
+                        serverStatus = "ready",
+                        timing = _tvPlayback.value.timing.copy(serverReadyNanos = SystemClock.elapsedRealtimeNanos()),
+                    )
+                    if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T7-server-ready trace=${tvStartupTrace?.traceId} attempt=${attempt.attemptId} elapsedRealtimeNanos=${_tvPlayback.value.timing.serverReadyNanos}")
                     Log.i("TvPlaybackTrace", safeTvPlaybackTrace(attempt, "server-ready", server = "ready previous=$previous resulting=$resulting startupMs=$elapsedMs"))
                 } else {
                     _tvPlayback.value = _tvPlayback.value.copy(serverStatus = "not-required")
@@ -2358,6 +2523,15 @@ class MainViewModel internal constructor(
                     eventListener = { event -> onTvPlaybackEvent(attempt, event) },
                     onEvent = { event ->
                         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return@resolveAndLoadStream
+                        if (BuildConfig.DEBUG) {
+                            val phase = when (event.stage) {
+                                PlaybackRepository.PlaybackLoadStage.ResolutionStarted -> "T8-core-resolve-started"
+                                PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved -> "T9-core-resolve-complete"
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadStarted -> "T10-playback-manager-load-started"
+                                PlaybackRepository.PlaybackLoadStage.PlayerLoadReturned -> "T10-playback-manager-load-returned"
+                            }
+                            Log.d("TvPlaybackTrace", "phase=$phase trace=${tvStartupTrace?.traceId} attempt=${attempt.attemptId} elapsedRealtimeNanos=${event.monotonicNanos}")
+                        }
                         if (event.stage == PlaybackRepository.PlaybackLoadStage.PlayableSourceResolved && BuildConfig.DEBUG) {
                             Log.d("PlaybackReuse", "source-resolved attempt=${attempt.attemptId} media=${target.videoId ?: target.contentId} kind=${event.source?.resolutionKind ?: "core"}")
                         }
@@ -2393,6 +2567,7 @@ class MainViewModel internal constructor(
                 )
                 Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "load-returned", actualEngine, _tvPlayback.value.timing))
                 startTvPlaybackMonitor(attempt)
+                startTvTorrentStartupStats(attempt, option)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (failure: Exception) {
@@ -2490,8 +2665,11 @@ class MainViewModel internal constructor(
                 val current = _tvPlayback.value
                 if (current.firstVisualObserved) return
                 tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+                tvTorrentStartupStatsJob?.cancel(); tvTorrentStartupStatsJob = null
                 tvSmartPlaybackSession = tvSmartPlaybackSession?.commit(attempt.attemptId)
-                val timing = current.timing.copy(firstVisualSignalNanos = SystemClock.elapsedRealtimeNanos())
+                val firstVisualNanos = SystemClock.elapsedRealtimeNanos()
+                val timing = current.timing.copy(firstVisualSignalNanos = firstVisualNanos)
+                if (BuildConfig.DEBUG) Log.d("TvPlaybackTrace", "phase=T13-first-visual trace=${tvStartupTrace?.traceId} attempt=${attempt.attemptId} elapsedRealtimeNanos=$firstVisualNanos")
                 _tvPlayback.value = current.copy(
                     stage = TvPlaybackStage.Playing,
                     firstVisualObserved = true,
@@ -2510,6 +2688,12 @@ class MainViewModel internal constructor(
                     current.option ?: return,
                 )
                 Log.i("TvPlaybackTrace", traceTvPlayback(attempt, "first-visual", actualEngine, timing, event.signalKind))
+                if (BuildConfig.DEBUG) {
+                    tvStartupTrace?.let { startup ->
+                        Log.d("TvStartupSummary", safeTvStartupSummary(startup, attempt, timing))
+                    }
+                }
+                tvStartupTrace = null
                 if (tvValidationFixtures?.consumeHoldAfterFirstVisual(attempt.target) == true) {
                     val player = playbackRepository.getPlayer()
                     val reusable = player as? com.stremio.mobile.player.ReusableExoPlayer
@@ -2598,6 +2782,39 @@ class MainViewModel internal constructor(
                     lastTvTimeReportNanos = SystemClock.elapsedRealtimeNanos()
                     playbackRepository.reportTimeChanged(runtime.positionMs, runtime.durationMs)
                 }
+            }
+        }
+    }
+
+    private fun startTvTorrentStartupStats(attempt: TvPlaybackAttempt, option: StreamOption) {
+        tvTorrentStartupStatsJob?.cancel(); tvTorrentStartupStatsJob = null
+        if (!BuildConfig.DEBUG || option.sourceKind != StreamSourceKind.Torrent) return
+        val torrent = option.core.stream.source as? com.stremio.core.types.resource.Stream.Source.Tramvai ?: return
+        val infoHash = torrent.value.infoHash
+        val fileIndex = torrent.value.fileIdx ?: StremioCore.STREAMING_SERVER_AUTO_FILE_INDEX
+        tvTorrentStartupStatsJob = viewModelScope.launch(Dispatchers.IO) {
+            var firstPeerAtNanos: Long? = null
+            var firstDownloadAtNanos: Long? = null
+            while (isActive && isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId) && !_tvPlayback.value.firstVisualObserved) {
+                playbackRepository.requestStreamStatistics(infoHash, fileIndex)
+                delay(800)
+                val stats = playbackRepository.getStreamStatistics()
+                if (stats?.infoHash == infoHash && isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) {
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    if (stats.peers > 0 && firstPeerAtNanos == null) firstPeerAtNanos = now
+                    if (stats.downloadSpeed > 0.0 && firstDownloadAtNanos == null) firstDownloadAtNanos = now
+                    val elapsedMs = (now - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000
+                    val timeToFirstPeerMs = firstPeerAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
+                    val timeToFirstDownloadMs = firstDownloadAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
+                    Log.d(
+                        "TvStartupTorrent",
+                        "attempt=${attempt.attemptId} elapsedMs=$elapsedMs peers=${stats.peers} " +
+                            "downloadSpeedBps=${stats.downloadSpeed.toLong().coerceAtLeast(0L)} " +
+                            "streamProgressPct=${(stats.streamProgress * 100).toInt().coerceIn(0, 100)} " +
+                            "firstPeerMs=${timeToFirstPeerMs ?: "pending"} firstDownloadMs=${timeToFirstDownloadMs ?: "pending"}",
+                    )
+                }
+                delay(200)
             }
         }
     }
@@ -2877,6 +3094,7 @@ class MainViewModel internal constructor(
         if (!isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId)) return
         if (maybeFallbackTvPlayback(attempt.attemptId, reason)) return
         tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+        tvTorrentStartupStatsJob?.cancel(); tvTorrentStartupStatsJob = null
         tvPlaybackJob?.cancel(); tvPlaybackJob = null
         tvPlaybackMonitorJob?.cancel(); tvPlaybackMonitorJob = null
         if (shouldReleaseRetainedPlayerAfterTvFailure(tvReusePendingAttemptId, attempt.attemptId)) {
@@ -2887,6 +3105,15 @@ class MainViewModel internal constructor(
         _tvPlayback.value = _tvPlayback.value.copy(stage = TvPlaybackStage.Error, error = message)
         tvEpisodeTransition.reset()
         Log.w("TvPlaybackTrace", traceTvPlayback(attempt, "failure:${reason.name.lowercase()}", _tvPlayback.value.actualEngine, _tvPlayback.value.timing))
+        if (BuildConfig.DEBUG) {
+            tvStartupTrace?.let { startup ->
+                Log.w(
+                    "TvStartupSummary",
+                    safeTvStartupSummary(startup, attempt, _tvPlayback.value.timing, result = "failed:${reason.name.lowercase()}", observedAtNanos = SystemClock.elapsedRealtimeNanos()),
+                )
+            }
+        }
+        tvStartupTrace = null
     }
 
     /** The only startup recovery decision point. Every callback must still own the active attempt. */
@@ -3022,8 +3249,10 @@ class MainViewModel internal constructor(
         }
         tvPlaybackJob?.cancel()
         tvStartupTimeoutJob?.cancel(); tvStartupTimeoutJob = null
+        tvTorrentStartupStatsJob?.cancel(); tvTorrentStartupStatsJob = null
         tvSmartPlaybackSession = tvSmartPlaybackSession?.cancel()
         tvSmartPlaybackSession = null
+        tvStartupTrace = null
         tvNextEpisodeJob?.cancel()
         tvNextEpisodeJob = null
         tvPlaybackJob = null
@@ -3052,6 +3281,7 @@ class MainViewModel internal constructor(
     fun closeDetails() {
         detailsJob?.cancel()
         detailsJob = null
+        detailsActivatedNanos = null
         selectedDetails.value = null
         detailsLibraryActionJob?.cancel()
         detailsLibraryActionJob = null
@@ -3069,6 +3299,7 @@ class MainViewModel internal constructor(
         val details = selectedDetails.value
         _tvDetailsUiState.value = TvDetailsUiState(
             details = details,
+            detailsActivatedNanos = detailsActivatedNanos,
             isInLibrary = detailsLibraryOverride ?: details?.let {
                 isDetailsItemInLibrary(
                     item = it.item,

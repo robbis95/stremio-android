@@ -33,7 +33,10 @@ import androidx.tv.material3.Button
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.OutlinedButton
 import androidx.tv.material3.Text
+import android.os.SystemClock
+import android.util.Log
 import coil3.compose.AsyncImage
+import com.stremio.mobile.BuildConfig
 import com.stremio.mobile.data.model.MetaDetails
 import com.stremio.mobile.data.model.EpisodeOption
 import com.stremio.mobile.presentation.tv.theme.TvColors
@@ -60,6 +63,17 @@ internal fun TvDetailsScreen(
     val sourceRequester = remember { FocusRequester() }
     val backRequester = remember { FocusRequester() }
     val scrollState = rememberScrollState()
+
+    LaunchedEffect(state.detailsActivatedNanos) {
+        val activatedAt = state.detailsActivatedNanos ?: return@LaunchedEffect
+        if (BuildConfig.DEBUG) {
+            val renderedAt = SystemClock.elapsedRealtimeNanos()
+            Log.d(
+                "TvDetailsTrace",
+                "phase=first-screen-render trace=$activatedAt elapsedRealtimeNanos=$renderedAt elapsedMs=${(renderedAt - activatedAt).coerceAtLeast(0L) / 1_000_000}",
+            )
+        }
+    }
 
     LaunchedEffect(hasSourceAction, item?.id, state.episodeBrowser != null) {
         runCatching {

@@ -3,7 +3,10 @@ package com.stremio.mobile.player
 import android.content.Context
 import android.graphics.Color
 import android.net.Uri
+import android.os.SystemClock
+import android.util.Log
 import android.view.View
+import com.stremio.mobile.BuildConfig
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -33,6 +36,7 @@ import java.util.Locale
 import java.net.ConnectException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.concurrent.ConcurrentHashMap
 import javax.net.ssl.SSLException
 
 class ExoStreamPlayer(
@@ -47,6 +51,10 @@ class ExoStreamPlayer(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableRuntimeState = MutableStateFlow(PlayerRuntimeState())
+    @Volatile private var startupLoadStartedNanos = 0L
+    @Volatile private var startupVisualObserved = false
+    @Volatile private var startupNetworkPhases: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    @Volatile private var playbackAttemptId: String? = null
 
     override val runtimeState: StateFlow<PlayerRuntimeState> = mutableRuntimeState
 
@@ -55,7 +63,7 @@ class ExoStreamPlayer(
             .setConnectTimeoutMs(30_000)
             .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
-            .setTransferListener(PlaybackBandwidth.transferListener(appContext))
+            .setTransferListener(PlaybackBandwidth.transferListener(appContext, ::traceStartupNetworkPhase))
         val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
             .setDataSourceFactory(dataSourceFactory)
@@ -117,7 +125,6 @@ class ExoStreamPlayer(
     private var currentSubtitleStyle = PlayerSubtitleStyle()
     private val firstVisualSignal = FirstVisualSignalGate()
     private var playbackEventListener: ((PlayerPlaybackEvent) -> Unit)? = null
-    private var playbackAttemptId: String? = null
     private var playbackMediaId: String? = null
 
     private val itemState = ExoItemState()
@@ -192,6 +199,9 @@ class ExoStreamPlayer(
         preferredSubtitleLang: String?,
         settings: com.stremio.core.types.profile.Profile.Settings?,
     ) {
+        startupLoadStartedNanos = SystemClock.elapsedRealtimeNanos()
+        startupVisualObserved = false
+        startupNetworkPhases = ConcurrentHashMap.newKeySet()
         val previousListener = listener
         val generation = itemLoadGeneration.begin()
         currentGeneration = generation
@@ -208,6 +218,9 @@ class ExoStreamPlayer(
         playbackReuseLog("Exo load attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$generation media=${playbackMediaId ?: "unknown"}")
         val mediaItem = buildMediaItem(uri, subtitles, preferredSubtitleLang)
         exoPlayer.setMediaItem(mediaItem, startPositionMs)
+        if (BuildConfig.DEBUG) {
+            Log.d("TvPlaybackTrace", "phase=T11-exo-prepare-started attempt=${playbackAttemptId ?: "unknown"} elapsedRealtimeMs=${SystemClock.elapsedRealtime()}")
+        }
         exoPlayer.prepare()
         publishState(error = null, ended = false)
     }
@@ -341,7 +354,18 @@ class ExoStreamPlayer(
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (isCurrentLoad()) publishState(ended = playbackState == androidx.media3.common.Player.STATE_ENDED)
+            if (isCurrentLoad()) {
+                if (playbackState == androidx.media3.common.Player.STATE_BUFFERING) traceStartupNetworkPhase("player-buffering")
+                if (BuildConfig.DEBUG && playbackState == androidx.media3.common.Player.STATE_READY) {
+                    traceStartupNetworkPhase("player-ready")
+                    Log.d("TvPlaybackTrace", "phase=T12-player-ready attempt=${playbackAttemptId ?: "unknown"}")
+                }
+                publishState(ended = playbackState == androidx.media3.common.Player.STATE_ENDED)
+            }
+        }
+
+        override fun onIsLoadingChanged(isLoading: Boolean) {
+            if (isCurrentLoad() && isLoading) traceStartupNetworkPhase("player-loading")
         }
 
         override fun onPlayerError(error: PlaybackException) {
@@ -352,6 +376,7 @@ class ExoStreamPlayer(
 
         override fun onRenderedFirstFrame() {
             if (!isCurrentLoad() || !firstVisualSignal.tryEmit()) return
+            startupVisualObserved = true
             playbackReuseLog("Exo first-visual attempt=${playbackAttemptId ?: "unknown"} instance=$instanceId generation=$generation media=${playbackMediaId ?: "unknown"}")
             playbackEventListener?.invoke(PlayerPlaybackEvent.FirstVisualFrame("ExoRenderedFirstFrame"))
         }
@@ -363,6 +388,29 @@ class ExoStreamPlayer(
         override fun onPlaybackParametersChanged(playbackParameters: androidx.media3.common.PlaybackParameters) {
             if (isCurrentLoad()) publishState()
         }
+    }
+
+    private fun traceStartupNetworkPhase(phase: String) {
+        if (!BuildConfig.DEBUG || startupVisualObserved) return
+        val attemptId = playbackAttemptId ?: return
+        val phases = startupNetworkPhases
+        if (phase.startsWith("http-")) {
+            val transferId = phase.removePrefix("http-").takeWhile(Char::isDigit)
+            if (transferId.isNotEmpty()) {
+                val observedTransferIds = phases.mapNotNull { existing ->
+                    existing.takeIf { it.startsWith("http-") }
+                        ?.removePrefix("http-")
+                        ?.takeWhile(Char::isDigit)
+                        ?.takeIf(String::isNotEmpty)
+                }.toSet()
+                if (transferId !in observedTransferIds && observedTransferIds.size >= 3) return
+            }
+        }
+        if (!phases.add(phase)) return
+        val startedNanos = startupLoadStartedNanos
+        val nowNanos = SystemClock.elapsedRealtimeNanos()
+        val elapsedMs = if (startedNanos > 0L && nowNanos >= startedNanos) (nowNanos - startedNanos) / 1_000_000 else -1L
+        Log.d("TvPlaybackTrace", "phase=$phase attempt=$attemptId elapsedFromLoadMs=$elapsedMs")
     }
 
     private fun applySubtitleStyleToView() {

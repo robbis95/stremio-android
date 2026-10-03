@@ -128,6 +128,13 @@ internal data class TvPlaybackAttempt(
 
 internal data class TvPlaybackTiming(
     val userSourceActivatedNanos: Long? = null,
+    val userPlayActivatedNanos: Long? = null,
+    val discoveryStartedNanos: Long? = null,
+    val firstCandidateNanos: Long? = null,
+    val candidateSnapshotNanos: Long? = null,
+    val selectorReturnedNanos: Long? = null,
+    val serverStartRequestedNanos: Long? = null,
+    val serverReadyNanos: Long? = null,
     val resolutionStartedNanos: Long? = null,
     val playableSourceResolvedNanos: Long? = null,
     val playerLoadStartedNanos: Long? = null,
@@ -137,10 +144,61 @@ internal data class TvPlaybackTiming(
     val resolutionLatencyMs: Long? get() = deltaMs(resolutionStartedNanos, playableSourceResolvedNanos)
     val playerLoadCallLatencyMs: Long? get() = deltaMs(playerLoadStartedNanos, playerLoadReturnedNanos)
     val ttffMs: Long? get() = deltaMs(userSourceActivatedNanos, firstVisualSignalNanos)
+    val userActivationToFirstVisualMs: Long? get() = deltaMs(userPlayActivatedNanos ?: userSourceActivatedNanos, firstVisualSignalNanos)
     val postResolveToFirstVisualMs: Long? get() = deltaMs(playableSourceResolvedNanos, firstVisualSignalNanos)
+    val serverStartupMs: Long? get() = deltaMs(serverStartRequestedNanos, serverReadyNanos)
+    val playerPrepareToFirstVisualMs: Long? get() = deltaMs(playerLoadStartedNanos, firstVisualSignalNanos)
+    val discoveryMs: Long? get() = deltaMs(discoveryStartedNanos, selectorReturnedNanos)
+    val smartSettleMs: Long? get() = deltaMs(firstCandidateNanos, selectorReturnedNanos)
 
     private fun deltaMs(start: Long?, end: Long?): Long? =
         if (start != null && end != null && end >= start) (end - start) / 1_000_000 else null
+}
+
+/** One user Play/Choose Source activation, retained across ranked fallback attempts. */
+internal data class TvStartupTrace(
+    val traceId: String = UUID.randomUUID().toString(),
+    val userActivatedNanos: Long,
+    val discoveryStartedNanos: Long? = null,
+    val firstCandidateNanos: Long? = null,
+    val candidateSnapshotNanos: Long? = null,
+    val selectorReturnedNanos: Long? = null,
+    val candidateCount: Int = 0,
+    val attemptCount: Int = 0,
+    val winningRank: Int? = null,
+)
+
+internal fun safeTvStartupSummary(
+    trace: TvStartupTrace,
+    attempt: TvPlaybackAttempt,
+    timing: TvPlaybackTiming,
+    result: String = "first-visual",
+    observedAtNanos: Long? = null,
+): String {
+    fun deltaMs(start: Long?, end: Long?): Long? =
+        if (start != null && end != null && end >= start) (end - start) / 1_000_000 else null
+
+    val totalMs = deltaMs(trace.userActivatedNanos, timing.firstVisualSignalNanos)
+        ?: deltaMs(trace.userActivatedNanos, observedAtNanos)
+    return buildString {
+        append("result=").append(result)
+        append(" trace=").append(trace.traceId)
+        append(" attempt=").append(attempt.attemptId)
+        append(" source=").append(when (attempt.sourceKind) {
+            StreamSourceKind.Direct -> "direct"
+            StreamSourceKind.Torrent -> "torrent"
+            else -> attempt.sourceKind.name.lowercase()
+        })
+        append(" rank=").append(trace.winningRank ?: "unknown")
+        append(" smartCandidates=").append(trace.candidateCount)
+        deltaMs(trace.discoveryStartedNanos, trace.selectorReturnedNanos)?.let { append(" discoveryMs=").append(it) }
+        deltaMs(trace.firstCandidateNanos, trace.selectorReturnedNanos)?.let { append(" settleMs=").append(it) }
+        append(" serverMs=").append(timing.serverStartupMs ?: if (attempt.serverRequired) "unknown" else 0)
+        append(" resolveMs=").append(timing.resolutionLatencyMs ?: "unknown")
+        append(" prepareMs=").append(timing.playerPrepareToFirstVisualMs ?: "unknown")
+        append(" totalMs=").append(totalMs ?: "unknown")
+        append(" fallbackAttempts=").append(trace.attemptCount.coerceAtLeast(1))
+    }
 }
 
 internal data class TvPlaybackUiState(
@@ -213,9 +271,14 @@ internal fun safeTvPlaybackTrace(
     resolution?.let { append(" resolution=").append(it) }
     convertedSource?.let { append(" convertedSource=").append(it) }
     append(" stage=").append(stage)
+    durations.discoveryMs?.let { append(" discoveryMs=").append(it) }
+    durations.smartSettleMs?.let { append(" settleMs=").append(it) }
+    durations.serverStartupMs?.let { append(" serverStartupMs=").append(it) }
     durations.resolutionLatencyMs?.let { append(" resolutionMs=").append(it) }
     durations.playerLoadCallLatencyMs?.let { append(" loadCallMs=").append(it) }
+    durations.playerPrepareToFirstVisualMs?.let { append(" prepareToVisualMs=").append(it) }
     durations.ttffMs?.let { append(" ttffMs=").append(it) }
+    durations.userActivationToFirstVisualMs?.let { append(" totalUserToVisualMs=").append(it) }
     durations.postResolveToFirstVisualMs?.let { append(" postResolveVisualMs=").append(it) }
     signalKind?.let { append(" signal=").append(it) }
 }

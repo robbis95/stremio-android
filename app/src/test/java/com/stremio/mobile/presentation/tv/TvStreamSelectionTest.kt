@@ -138,6 +138,10 @@ class TvStreamSelectionTest {
         val movie = TvStreamTarget.nonEpisodic(item("movie", "movie"))
         assertTrue(tvStreamTargetMatches(details("movie", "movie", null, true), movie))
         assertFalse(tvStreamTargetMatches(details("movie", "movie", null, false), movie))
+        assertTrue(tvStreamTargetMatches(details("movie", "movie", null, false, streamPathId = "movie"), movie))
+        assertTrue(tvStreamTargetMatches(details("movie", "movie", null, true, streamPathId = "movie"), movie))
+        assertFalse(tvStreamTargetMatches(details("movie", "movie", null, false, streamPathId = "another-movie"), movie))
+        assertFalse(tvStreamTargetMatches(details("movie", "another-movie", null, false, streamPathId = "movie"), movie))
     }
 
     @Test fun `interaction snapshot updates in place appends late data and removes missing`() {
@@ -285,10 +289,10 @@ class TvStreamSelectionTest {
         assertTrue(target.guessStreamPath)
     }
 
-    private fun details(type: String, id: String, videoId: String?, guess: Boolean) = MetaDetails(
+    private fun details(type: String, id: String, videoId: String?, guess: Boolean, streamPathId: String? = videoId) = MetaDetails(
         selected = MetaDetails.Selected(
             metaPath = ResourcePath("meta", type, id),
-            streamPath = videoId?.let { ResourcePath("stream", type, it) },
+            streamPath = streamPathId?.let { ResourcePath("stream", type, it) },
             guessStreamPath = guess,
         ),
     )

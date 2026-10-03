@@ -52,7 +52,14 @@ class TvPlaybackStateTest {
 
     @Test fun `timing exposes resolution load and visual deltas in milliseconds`() {
         val timing = TvPlaybackTiming(
-            userSourceActivatedNanos = 1_000_000,
+            userSourceActivatedNanos = 5_000_000,
+            userPlayActivatedNanos = 0,
+            discoveryStartedNanos = 0,
+            firstCandidateNanos = 2_000_000,
+            candidateSnapshotNanos = 3_000_000,
+            selectorReturnedNanos = 4_000_000,
+            serverStartRequestedNanos = 5_000_000,
+            serverReadyNanos = 10_000_000,
             resolutionStartedNanos = 2_000_000,
             playableSourceResolvedNanos = 12_000_000,
             playerLoadStartedNanos = 13_000_000,
@@ -61,9 +68,44 @@ class TvPlaybackStateTest {
         )
         assertEquals(10L, timing.resolutionLatencyMs)
         assertEquals(7L, timing.playerLoadCallLatencyMs)
-        assertEquals(50L, timing.ttffMs)
+        assertEquals(46L, timing.ttffMs)
+        assertEquals(51L, timing.userActivationToFirstVisualMs)
         assertEquals(39L, timing.postResolveToFirstVisualMs)
+        assertEquals(5L, timing.serverStartupMs)
+        assertEquals(38L, timing.playerPrepareToFirstVisualMs)
+        assertEquals(4L, timing.discoveryMs)
+        assertEquals(2L, timing.smartSettleMs)
         assertNull(TvPlaybackTiming().ttffMs)
+    }
+
+    @Test fun `startup summary reports original activation through first visual without source data`() {
+        val attempt = TvPlaybackAttempt.create(target, option("safe"), PlayerEngine.EXO, 10_000_000)
+        val trace = TvStartupTrace(
+            userActivatedNanos = 1_000_000,
+            discoveryStartedNanos = 1_000_000,
+            firstCandidateNanos = 2_000_000,
+            candidateSnapshotNanos = 3_000_000,
+            selectorReturnedNanos = 4_000_000,
+            candidateCount = 56,
+            attemptCount = 2,
+            winningRank = 2,
+        )
+        val summary = safeTvStartupSummary(
+            trace,
+            attempt,
+            TvPlaybackTiming(
+                userPlayActivatedNanos = 1_000_000,
+                resolutionStartedNanos = 10_000_000,
+                playableSourceResolvedNanos = 390_000_000,
+                playerLoadStartedNanos = 400_000_000,
+                firstVisualSignalNanos = 1_310_000_000,
+            ),
+        )
+        assertTrue(summary.contains("rank=2"))
+        assertTrue(summary.contains("smartCandidates=56"))
+        assertTrue(summary.contains("fallbackAttempts=2"))
+        assertTrue(summary.contains("totalMs=1309"))
+        listOf("https://", "magnet:", "token=").forEach { assertFalse(summary.contains(it, ignoreCase = true)) }
     }
 
     @Test fun `trace formatting never includes a resolved uri`() {

@@ -1,6 +1,7 @@
 package com.stremio.mobile
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -34,6 +35,7 @@ class TvActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (BuildConfig.DEBUG) Log.d("TvRuntime", "entrypoint=TvActivity ui=custom-tv")
         WindowCompat.setDecorFitsSystemWindows(window, true)
         window.statusBarColor = android.graphics.Color.rgb(16, 18, 22)
         window.navigationBarColor = android.graphics.Color.rgb(16, 18, 22)

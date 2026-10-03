@@ -226,12 +226,15 @@ internal fun tvStreamTargetMatches(
     val selected = details.selected ?: return false
     val metaPath = selected.metaPath
     if (metaPath.type != target.contentType || metaPath.id != target.contentId) return false
-    if (selected.guessStreamPath != target.guessStreamPath) return false
     val path = selected.streamPath
     return if (target.videoId != null) {
-        path?.resource == "stream" && path.type == target.contentType && path.id == target.videoId
+        selected.guessStreamPath == target.guessStreamPath &&
+            path?.resource == "stream" && path.type == target.contentType && path.id == target.videoId
     } else {
-        target.guessStreamPath && path == null
+        target.guessStreamPath && (
+            (selected.guessStreamPath && path == null) ||
+                (path?.resource == "stream" && path.type == target.contentType && path.id == target.contentId)
+            )
     }
 }
 

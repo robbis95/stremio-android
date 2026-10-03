@@ -41,6 +41,7 @@ internal fun detailsWhileLoading(preview: CatalogItem): MetaDetails = MetaDetail
 
 internal data class TvDetailsUiState(
     val details: MetaDetails? = null,
+    val detailsActivatedNanos: Long? = null,
     val isInLibrary: Boolean = false,
     val isLibraryActionLoading: Boolean = false,
     val episodeBrowser: TvEpisodeBrowserUiState? = null,

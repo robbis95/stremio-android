@@ -1,0 +1,110 @@
+name: Android TV Native Debug APK
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to build
+        required: false
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit to build
+        required: false
+        default: feat/android-tv
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-tv-native-arm64-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-debug:
+    name: Build and verify ${{ matrix.name }} native debug APK
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ARM64
+            abi: arm64-v8a
+            rust-target: aarch64-linux-android
+            task: assembleTvArm64Debug
+            artifact: stremio-android-tv-arm64-native-debug
+            cache-path: app/build/vcpkg_installed_arm64
+            cache-key: android-vcpkg-arm64
+            install-dir: app/build/vcpkg_installed_arm64
+          - name: ARMv7
+            abi: armeabi-v7a
+            rust-target: armv7-linux-androideabi
+            task: assembleTvArmV7Debug
+            artifact: stremio-android-tv-armeabi-v7a-native-debug
+            cache-path: app/build/vcpkg_installed_armv7
+            cache-key: android-vcpkg-armv7
+            install-dir: app/build/vcpkg_installed_armv7
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-target }}
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Set up pinned vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: "84bab45d415d22042bd0b9081aea57f362da3f35"
+          vcpkgDirectory: "${{ github.workspace }}/vcpkg"
+          vcpkgJsonGlob: "stream-server/vcpkg.json"
+          runVcpkgInstall: false
+
+      - name: Cache Android ARM64 vcpkg dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.cache-path }}
+          key: ${{ matrix.cache-key }}-${{ hashFiles('stream-server/vcpkg.json') }}-84bab45
+          restore-keys: |
+            ${{ matrix.cache-key }}-${{ hashFiles('stream-server/vcpkg.json') }}-
+
+      - name: Build ${{ matrix.name }} native debug APK and verify packaged libraries
+        run: bash ./gradlew :app:${{ matrix.task }} --warning-mode all
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          VCPKG_ROOT: ${{ github.workspace }}/vcpkg
+          VCPKG_INSTALLED_DIR_ARM64: ${{ github.workspace }}/app/build/vcpkg_installed_arm64
+          VCPKG_INSTALLED_DIR_ARMV7: ${{ github.workspace }}/${{ matrix.install-dir }}
+
+      - name: Upload ${{ matrix.name }} TV debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: app/build/outputs/apk/debug/*${{ matrix.abi }}*debug.apk
+          if-no-files-found: error
+          retention-days: 14

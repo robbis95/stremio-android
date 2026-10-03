@@ -7,6 +7,7 @@ import com.stremio.mobile.core.CoreStream
 import com.stremio.mobile.data.model.StreamOption
 import com.stremio.mobile.data.model.StreamSourceKind
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -254,6 +255,85 @@ class TvSmartStreamSelectorTest {
         assertEquals("web", slow.selected?.semanticKey)
         val unknown = TvSmartStreamSelector.select(listOf(option("1080", "1080p"), option("4k", "2160p")), "2160p")
         assertEquals("4k", unknown.selected?.semanticKey)
+    }
+
+    @Test fun `shared metadata parser extracts video release audio size age and languages`() {
+        val metadata = parseStreamVideoMetadata(option("rich", null, StreamSourceKind.Direct).copy(
+            name = "The.Show.1080p.WEB-DL.AVC.DV.Atmos.DD+5.1-GROUP",
+            description = "4.19 GB 5.58 Mbps 2d Audio: en Subs: es",
+            size = "4.19 GB",
+        ))
+        assertEquals("1080p", metadata.quality)
+        assertEquals(VideoCodec.Avc, metadata.codec)
+        assertEquals(VideoHdr.DolbyVision, metadata.hdr)
+        assertEquals(ReleaseKind.WebDl, metadata.release)
+        assertEquals("DD+", metadata.audioCodec)
+        assertEquals(listOf("Atmos"), metadata.audioFeatures)
+        assertEquals("5.1", metadata.channels)
+        assertEquals("4.19 GB", metadata.sizeLabel)
+        assertEquals(5.58, metadata.bitrateMbps!!, 0.001)
+        assertFalse(metadata.bitrateCalculatedFromSizeAndDuration)
+        assertEquals("2d", metadata.age)
+        assertEquals(listOf("EN"), metadata.languages)
+        assertEquals(listOf("ES"), metadata.subtitleLanguages)
+        assertEquals("GROUP", metadata.releaseLabel)
+    }
+
+    @Test fun `shared metadata parser supports web rip hevc hdr10 and common audio`() {
+        val metadata = parseStreamVideoMetadata(option("web-rip", null).copy(
+            name = "Movie 4K WEBRip H265 HDR10 DD 5.1",
+        ))
+        assertEquals("2160p", metadata.quality)
+        assertEquals(VideoCodec.Hevc, metadata.codec)
+        assertEquals(VideoHdr.Hdr10, metadata.hdr)
+        assertEquals(ReleaseKind.WebRip, metadata.release)
+        assertEquals("DD", metadata.audioCodec)
+        assertEquals("5.1", metadata.channels)
+    }
+
+    @Test fun `structured file size takes precedence and average bitrate is marked calculated`() {
+        val metadata = parseStreamVideoMetadata(option("size", null).copy(
+            description = "Size: 700 MB",
+            size = "700 MB",
+            videoSize = 4_294_967_296L,
+        ), durationSeconds = 6_160)
+        assertEquals(4_294_967_296L, metadata.sizeBytes)
+        assertEquals("4.29 GB", metadata.sizeLabel)
+        assertTrue(metadata.bitrateCalculatedFromSizeAndDuration)
+        assertEquals(5.58, metadata.bitrateMbps!!, 0.02)
+    }
+
+    @Test fun `missing metadata stays absent and addon title is not parsed as stream data`() {
+        val metadata = parseStreamVideoMetadata(option("missing", null, provider = "4K WEB-DL Atmos 5.1"))
+        assertEquals("unknown", metadata.quality)
+        assertEquals(VideoCodec.Unknown, metadata.codec)
+        assertEquals(VideoHdr.Unknown, metadata.hdr)
+        assertEquals(ReleaseKind.Unknown, metadata.release)
+        assertNull(metadata.audioCodec)
+        assertTrue(metadata.audioFeatures.isEmpty())
+        assertNull(metadata.channels)
+        assertNull(metadata.sizeBytes)
+        assertNull(metadata.bitrateMbps)
+        assertNull(metadata.age)
+        assertTrue(metadata.languages.isEmpty())
+        assertNull(metadata.releaseLabel)
+    }
+
+    @Test fun `direct transport stays direct when text has torrent-like release details`() {
+        val rich = option("rich-direct", null, StreamSourceKind.Direct).copy(name = "1080p WEB-DL AVC release")
+        assertEquals(StreamSourceKind.Direct, rich.core.stream.source.let { if (it is Stream.Source.Url) StreamSourceKind.Direct else StreamSourceKind.Other })
+        assertEquals("1080p", parseStreamVideoMetadata(rich).quality)
+        assertEquals(ReleaseKind.WebDl, parseStreamVideoMetadata(rich).release)
+    }
+
+    @Test fun `raw url is never returned as presentation text`() {
+        val raw = "https://cdn.example.invalid/1080p-WEB-DL?token=secret"
+        val option = option("url", null, StreamSourceKind.Direct).copy(name = "1080p WEB-DL $raw", description = raw)
+        val safeTitle = safeStreamPresentationText(option.name)
+        val metadata = parseStreamVideoMetadata(option)
+        assertFalse(safeTitle.contains("https://"))
+        assertFalse(safeTitle.contains("token=secret"))
+        assertFalse(metadata.releaseLabel?.contains("https://") == true)
     }
 
     private fun option(key: String, quality: String?, kind: StreamSourceKind = StreamSourceKind.Other, seeds: String? = null,

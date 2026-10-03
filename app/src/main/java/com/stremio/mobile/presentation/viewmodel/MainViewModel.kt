@@ -84,6 +84,8 @@ import com.stremio.mobile.presentation.tv.TvSmartStreamSelector
 import com.stremio.mobile.presentation.tv.AndroidPlaybackCapabilities
 import com.stremio.mobile.presentation.tv.NetworkPlaybackHistory
 import com.stremio.mobile.presentation.tv.networkSnapshot
+import com.stremio.mobile.presentation.tv.parseStreamVideoMetadata
+import com.stremio.mobile.presentation.tv.safeStreamPresentationText
 import com.stremio.mobile.presentation.tv.tvSmartResultApplies
 import com.stremio.mobile.presentation.tv.tvSmartShouldFinish
 import com.stremio.mobile.presentation.tv.TvValidationFixtures
@@ -2189,6 +2191,27 @@ class MainViewModel internal constructor(
                                 auditOptions.count { !it.size.isNullOrBlank() },
                                 incoming.duplicateSemanticKeyCount,
                             )
+                            auditOptions.forEachIndexed { index, option ->
+                                val metadata = parseStreamVideoMetadata(option)
+                                val stream = option.core.stream
+                                val hints = stream.behaviorHints
+                                val bitrate = metadata.bitrateMbps?.let {
+                                    "${if (metadata.bitrateCalculatedFromSizeAndDuration) "average~" else "explicit"}:${"%.2f".format(java.util.Locale.ROOT, it)}"
+                                } ?: "unknown"
+                                Log.d(
+                                    "TvStreamMetadata",
+                                    "index=$index sourceKind=${option.sourceKind.name} resolution=${metadata.quality} " +
+                                        "releaseType=${metadata.release.name} videoCodec=${metadata.codec.name} hdr=${metadata.hdr.name} " +
+                                        "audioCodec=${metadata.audioCodec ?: "unknown"} audioFeatures=${metadata.audioFeatures.joinToString("+").ifBlank { "unknown" }} " +
+                                        "channels=${metadata.channels ?: "unknown"} size=${metadata.sizeLabel ?: "unknown"} bitrateMbps=$bitrate " +
+                                        "age=${metadata.age ?: "unknown"} languages=${metadata.languages.joinToString("+").ifBlank { "unknown"}} " +
+                                        "subtitleLanguages=${metadata.subtitleLanguages.joinToString("+").ifBlank { "unknown"}} " +
+                                        "releaseLabel=${metadata.releaseLabel?.let(::safeStreamPresentationText)?.take(40) ?: "unknown"} " +
+                                        "presence_name=${stream.name != null} presence_description=${stream.description != null} " +
+                                        "presence_thumbnail=${stream.thumbnail != null} presence_filename=${hints.filename != null} " +
+                                        "presence_videoSize=${hints.videoSize != null} presence_bingeGroup=${hints.bingeGroup != null}",
+                                )
+                            }
                             auditOptions.filter { it.sourceKind == StreamSourceKind.Direct }.forEach { direct ->
                                 val proxyHeaders = direct.core.stream.behaviorHints.proxyHeaders
                                 Timber.tag("TvDirectAudit").d(

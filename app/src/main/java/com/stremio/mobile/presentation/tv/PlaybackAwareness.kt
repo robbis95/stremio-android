@@ -46,7 +46,24 @@ data class NetworkPlaybackProfile(
 enum class VideoCodec { Avc, Hevc, Av1, Vp9, Unknown }
 enum class VideoHdr { DolbyVision, Hdr10Plus, Hdr10, Hlg, Unknown }
 enum class ReleaseKind { Remux, WebDl, WebRip, BluRay, Unknown }
-data class StreamVideoMetadata(val quality: String, val codec: VideoCodec, val hdr: VideoHdr, val release: ReleaseKind, val requiredBitrateBps: Long? = null)
+data class StreamVideoMetadata(
+    val quality: String,
+    val codec: VideoCodec,
+    val hdr: VideoHdr,
+    val release: ReleaseKind,
+    val requiredBitrateBps: Long? = null,
+    val audioCodec: String? = null,
+    val audioFeatures: List<String> = emptyList(),
+    val channels: String? = null,
+    val sizeBytes: Long? = null,
+    val sizeLabel: String? = null,
+    val bitrateMbps: Double? = null,
+    val bitrateCalculatedFromSizeAndDuration: Boolean = false,
+    val age: String? = null,
+    val languages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
+    val releaseLabel: String? = null,
+)
 enum class Compatibility { Compatible, Unknown, Incompatible }
 enum class NetworkSustainability { Comfortable, Borderline, Unsustainable, Unknown }
 
@@ -143,7 +160,16 @@ internal fun isRemoteNetworkUri(value: String): Boolean {
 }
 
 internal fun parseStreamVideoMetadata(option: StreamOption, durationSeconds: Long? = null): StreamVideoMetadata {
-    val text = listOfNotNull(option.quality, option.name, option.description, option.filename).joinToString(" ").lowercase(Locale.ROOT)
+    // Stream text is untrusted addon presentation data. Remove URLs before parsing or displaying labels.
+    val safeTextParts = listOfNotNull(
+        option.quality,
+        option.name?.takeUnless { it.equals(option.addonTitle, ignoreCase = true) },
+        option.description,
+        option.filename,
+        option.cleanDescription,
+    ).map(::safeStreamPresentationText)
+    val displayText = safeTextParts.joinToString(" ")
+    val text = displayText.lowercase(Locale.ROOT)
     val explicitQuality = when (option.quality?.lowercase()?.replace(" ", "")) {
         "2160p", "4k", "uhd" -> "2160p"; "1080p" -> "1080p"; "720p" -> "720p"; "480p" -> "480p"; else -> null
     }
@@ -177,8 +203,84 @@ internal fun parseStreamVideoMetadata(option: StreamOption, durationSeconds: Lon
         else -> ReleaseKind.Unknown
     }
     val bytes = option.videoSize?.takeIf { it > 0 } ?: parseSizeBytes(option.size).takeIf { it > 0 }
-    val bitrate = if (bytes != null && durationSeconds != null && durationSeconds > 0) bytes * 8 / durationSeconds else null
-    return StreamVideoMetadata(quality, codec, hdr, release, bitrate?.times(14)?.div(10))
+    val sizeLabel = bytes?.let(::formatSizeLabel)
+    val explicitBitrateMbps = Regex("(?<![a-z0-9.])(\\d+(?:[.,]\\d+)?)\\s*(?:mbps|mbit/s)(?![a-z0-9])", RegexOption.IGNORE_CASE)
+        .find(displayText)?.groupValues?.get(1)?.replace(',', '.')?.toDoubleOrNull()
+    val bitrateMbps = explicitBitrateMbps ?: if (bytes != null && durationSeconds != null && durationSeconds > 0) {
+        bytes * 8.0 / durationSeconds / 1_000_000.0
+    } else null
+    val bitrateCalculated = explicitBitrateMbps == null && bitrateMbps != null
+    val bitrateBps = bitrateMbps?.let { (it * 1_000_000).toLong().takeIf { value -> value > 0 } }
+    val requiredBitrateBps = bitrateBps?.let { if (bitrateCalculated) it * 14 / 10 else it }
+    val audioCodec = when {
+        Regex("(?<![a-z0-9])(?:e-?ac-?3|ddp|dd\\+|dolby[ ._-]?digital[ ._-]?plus)(?![a-z])").containsMatchIn(text) -> "DD+"
+        Regex("(?<![a-z0-9])(?:ac-?3|dd)(?![a-z0-9+])").containsMatchIn(text) -> "DD"
+        Regex("(?<![a-z0-9])truehd(?![a-z0-9])").containsMatchIn(text) -> "TrueHD"
+        Regex("(?<![a-z0-9])dts(?:-hd)?(?:[ ._-]?ma)?(?![a-z0-9])").containsMatchIn(text) -> "DTS"
+        Regex("(?<![a-z0-9])aac(?![a-z0-9])").containsMatchIn(text) -> "AAC"
+        Regex("(?<![a-z0-9])flac(?![a-z0-9])").containsMatchIn(text) -> "FLAC"
+        else -> null
+    }
+    val audioFeatures = buildList {
+        if (Regex("(?<![a-z0-9])(?:atmos|ddp[ ._-]?atmos)(?![a-z0-9])").containsMatchIn(text)) add("Atmos")
+        if (Regex("(?<![a-z0-9])dts[ ._-]?x(?![a-z0-9])").containsMatchIn(text)) add("DTS:X")
+    }
+    val channels = Regex("(?<![0-9])(\\d\\.\\d)(?![0-9])").find(text)?.groupValues?.get(1)
+    val age = Regex("(?<![a-z0-9])(\\d{1,3}\\s*(?:min|h|d|w|mo|y))(?![a-z0-9])", RegexOption.IGNORE_CASE)
+        .find(displayText)?.groupValues?.get(1)?.replace(Regex("\\s+"), "")
+    val languages = parseLanguageMarkers(text, "(?:audio|lang(?:uage)?)")
+    val subtitleLanguages = parseLanguageMarkers(text, "(?:sub(?:title)?s?)")
+    val releaseLabel = parseReleaseLabel(displayText)
+    return StreamVideoMetadata(
+        quality = quality,
+        codec = codec,
+        hdr = hdr,
+        release = release,
+        requiredBitrateBps = requiredBitrateBps,
+        audioCodec = audioCodec,
+        audioFeatures = audioFeatures,
+        channels = channels,
+        sizeBytes = bytes,
+        sizeLabel = sizeLabel,
+        bitrateMbps = bitrateMbps,
+        bitrateCalculatedFromSizeAndDuration = bitrateCalculated,
+        age = age,
+        languages = languages,
+        subtitleLanguages = subtitleLanguages,
+        releaseLabel = releaseLabel,
+    )
+}
+
+internal fun safeStreamPresentationText(value: String): String = value
+    .replace(Regex("(?i)\\b[a-z][a-z0-9+.-]{1,15}://\\S*|\\bmagnet:\\S*"), " ")
+    .trim()
+
+private fun formatSizeLabel(bytes: Long): String = when {
+    bytes >= 1_000_000_000L -> "%.2f GB".format(Locale.ROOT, bytes / 1_000_000_000.0)
+    bytes >= 1_000_000L -> "%.0f MB".format(Locale.ROOT, bytes / 1_000_000.0)
+    else -> "%.0f KB".format(Locale.ROOT, bytes / 1_000.0)
+}
+
+private fun parseLanguageMarkers(text: String, prefix: String): List<String> {
+    val langs = linkedMapOf("en" to "EN", "eng" to "EN", "es" to "ES", "spa" to "ES", "fr" to "FR", "fre" to "FR", "de" to "DE", "ger" to "DE", "it" to "IT", "ita" to "IT", "ja" to "JA", "jpn" to "JA", "ko" to "KO", "kor" to "KO", "pt" to "PT", "por" to "PT", "ru" to "RU", "rus" to "RU")
+    val result = linkedSetOf<String>()
+    val marker = Regex("$prefix\\s*[:=]\\s*([a-z]{2,3}(?:\\s*[,/+ ]\\s*[a-z]{2,3})*)", RegexOption.IGNORE_CASE)
+    marker.findAll(text).forEach { match ->
+        Regex("[a-z]{2,3}", RegexOption.IGNORE_CASE).findAll(match.groupValues[1]).forEach { code ->
+            langs[code.value.lowercase(Locale.ROOT)]?.let(result::add)
+        }
+    }
+    return result.toList()
+}
+
+private fun parseReleaseLabel(text: String): String? {
+    // Prefer a conventional trailing release group (e.g. -GROUP); do not fall back to provider names.
+    val match = Regex("[-–]([A-Z0-9][A-Z0-9._-]{1,24})(?=\\s|$)")
+        .findAll(text).lastOrNull() ?: return null
+    val group = match.groupValues[1]
+    val prefix = text.substring(0, match.range.first).trimEnd().uppercase(Locale.ROOT)
+    if (prefix.endsWith("WEB") || group.uppercase(Locale.ROOT) in setOf("DL", "WEB", "WEBRIP", "HDR", "HEVC", "AVC")) return null
+    return group.takeIf { it.length >= 3 }
 }
 
 internal fun compatibility(metadata: StreamVideoMetadata, device: DevicePlaybackCapabilities): Compatibility {

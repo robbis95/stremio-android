@@ -319,6 +319,33 @@ private data class TvStreamsDebugAction(
 @Composable
 private fun TvSourceRow(option: StreamOption, selected: Boolean, recommended: Boolean, modifier: Modifier = Modifier) {
     var focused by remember(option.semanticKey) { mutableStateOf(false) }
+    val metadata = remember(option) { parseStreamVideoMetadata(option) }
+    val title = safeStreamPresentationText(option.name)
+    val technical = listOfNotNull(
+        metadata.quality.takeUnless { it == "unknown" }?.uppercase(),
+        metadata.release.toPresentationLabel(),
+        metadata.codec.toPresentationLabel(),
+        metadata.hdr.toPresentationLabel(),
+    ).distinct().joinToString("  ·  ")
+    val audio = listOfNotNull(
+        metadata.audioFeatures.takeIf { it.isNotEmpty() }?.joinToString(" "),
+        metadata.audioCodec,
+        metadata.channels,
+    ).distinct().joinToString("  ·  ")
+    val details = listOfNotNull(
+        audio.takeIf(String::isNotBlank),
+        metadata.languages.takeIf { it.isNotEmpty() }?.joinToString(prefix = "Audio "),
+        metadata.subtitleLanguages.takeIf { it.isNotEmpty() }?.joinToString(prefix = "Subs "),
+        metadata.sizeLabel,
+        metadata.bitrateMbps?.let { "${if (metadata.bitrateCalculatedFromSizeAndDuration) "~" else ""}%.2f Mbps".format(java.util.Locale.ROOT, it) },
+        metadata.age,
+    ).joinToString("  ·  ")
+    val sourceLabel = listOfNotNull(
+        option.addonTitle.takeIf(String::isNotBlank),
+        metadata.releaseLabel,
+        option.seeds?.let { "$it seeds" },
+        option.origin?.takeIf(String::isNotBlank)?.let(::safeStreamPresentationText),
+    ).joinToString(" · ")
     val shape = RoundedCornerShape(9.dp)
     Row(
         modifier = modifier
@@ -339,27 +366,18 @@ private fun TvSourceRow(option: StreamOption, selected: Boolean, recommended: Bo
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                option.quality?.let { Text(it.uppercase(), color = TvColors.accent, style = MaterialTheme.typography.labelLarge) }
+                technical.takeIf(String::isNotBlank)?.let { Text(it, color = TvColors.accent, style = MaterialTheme.typography.labelLarge) }
                 Text(
-                    option.name,
-                    Modifier.weight(1f).padding(start = if (option.quality == null) 0.dp else 10.dp),
+                    title,
+                    Modifier.weight(1f).padding(start = if (technical.isBlank()) 0.dp else 10.dp),
                     color = TvColors.primaryText,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Text(
-                listOfNotNull(option.addonTitle, option.size, option.seeds?.let { "$it seeds" }, option.origin)
-                    .joinToString("  ·  "),
-                color = TvColors.secondaryText,
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            option.cleanDescription?.takeIf(String::isNotBlank)?.let {
-                Text(it, color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
+            if (details.isNotBlank()) Text(details, color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(sourceLabel, color = TvColors.secondaryText, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (selected) {
             Spacer(Modifier.width(14.dp))
@@ -370,4 +388,28 @@ private fun TvSourceRow(option: StreamOption, selected: Boolean, recommended: Bo
             Text("Recommended", color = TvColors.accent, style = MaterialTheme.typography.labelLarge)
         }
     }
+}
+
+private fun ReleaseKind.toPresentationLabel(): String? = when (this) {
+    ReleaseKind.Remux -> "REMUX"
+    ReleaseKind.WebDl -> "WEB-DL"
+    ReleaseKind.WebRip -> "WEBRip"
+    ReleaseKind.BluRay -> "BluRay"
+    ReleaseKind.Unknown -> null
+}
+
+private fun VideoCodec.toPresentationLabel(): String? = when (this) {
+    VideoCodec.Avc -> "AVC"
+    VideoCodec.Hevc -> "HEVC"
+    VideoCodec.Av1 -> "AV1"
+    VideoCodec.Vp9 -> "VP9"
+    VideoCodec.Unknown -> null
+}
+
+private fun VideoHdr.toPresentationLabel(): String? = when (this) {
+    VideoHdr.DolbyVision -> "DV"
+    VideoHdr.Hdr10Plus -> "HDR10+"
+    VideoHdr.Hdr10 -> "HDR10"
+    VideoHdr.Hlg -> "HLG"
+    VideoHdr.Unknown -> null
 }

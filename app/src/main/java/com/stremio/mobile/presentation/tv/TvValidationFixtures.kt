@@ -150,6 +150,10 @@ class TvValidationFixtures(
         )
     }
 
+    /** A legal, deterministic raw Torrent fixture that always enters the production Core resolver. */
+    internal fun rawTorrentOption(target: TvStreamTarget): StreamOption? =
+        if (debugBuild) TvRawTorrentFixtureSource.create(target) else null
+
     /** Null means this target is outside fixture mode; a handled result with null video means C is terminal. */
     internal fun nextVideoFor(target: TvStreamTarget): FixtureNextVideo? {
         if (!isEnabled()) return null
@@ -157,6 +161,8 @@ class TvValidationFixtures(
     }
 
     override suspend fun resolve(option: StreamOption): ResolvedPlayableSource {
+        // The raw Torrent fixture must be converted by Core and the native streaming server.
+        if (TvRawTorrentFixtureSource.mustUseCoreResolver(option)) return coreResolver.resolve(option)
         if (BuildConfig.DEBUG) when (option.semanticKey) {
             "tv-smart-a" -> throw TvSmartFallbackFixtureFailure(TvPlaybackFailureReason.Container)
             "tv-smart-b" -> throw TvSmartFallbackFixtureFailure(TvPlaybackFailureReason.Source)
@@ -186,6 +192,9 @@ class TvValidationFixtures(
     }
 
     companion object {
+        internal fun mustUseCoreResolverForRawTorrent(option: StreamOption): Boolean =
+            TvRawTorrentFixtureSource.mustUseCoreResolver(option)
+
         val FIXTURES = listOf(
             Fixture("A", "tv_fixture_a", "red test episode"),
             Fixture("B", "tv_fixture_b", "green test episode"),

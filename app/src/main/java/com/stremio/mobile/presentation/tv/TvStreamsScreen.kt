@@ -60,6 +60,7 @@ internal fun TvStreamsScreen(
     onArmHoldAfterFirstVisual: () -> Unit = {},
     onArmMpvRequestedEngine: () -> Unit = {},
     onSmartPlayFixture: () -> Unit = {},
+    onRawTorrentFixture: () -> Unit = {},
 ) {
     val target = state.target ?: return
     val targetKey = target.semanticTargetKey
@@ -72,6 +73,7 @@ internal fun TvStreamsScreen(
     val holdRequester = remember { FocusRequester() }
     val mpvRequester = remember(targetKey) { FocusRequester() }
     val smartFixtureRequester = remember(targetKey) { FocusRequester() }
+    val rawTorrentRequester = remember(targetKey) { FocusRequester() }
     val providerRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val streamRequesters = remember(targetKey) { mutableMapOf<String, FocusRequester>() }
     val visible = state.visibleOptions
@@ -87,6 +89,7 @@ internal fun TvStreamsScreen(
             TvStreamsDebugAction(holdRequester, "DEBUG: pause next fixture after first visual", onArmHoldAfterFirstVisual),
             TvStreamsDebugAction(mpvRequester, "DEBUG: request MPV for fixture B", onArmMpvRequestedEngine),
             TvStreamsDebugAction(smartFixtureRequester, "DEBUG: Smart Fallback A → B → C fixture", onSmartPlayFixture),
+            TvStreamsDebugAction(rawTorrentRequester, "Raw Torrent · Sintel", onRawTorrentFixture),
         )
     } else {
         emptyList()

@@ -2388,6 +2388,16 @@ class MainViewModel internal constructor(
         finishTvSmartSelection(target, "debug-fixture")
     }
 
+    /** Starts the genuine Sintel Tramvai source through the normal production TV playback path. */
+    internal fun playTvRawTorrentFixture() {
+        if (!BuildConfig.DEBUG) return
+        val target = _tvStreamSelection.value.target ?: return
+        val option = tvValidationFixtures?.rawTorrentOption(target) ?: return
+        val torrent = option.core.stream.source as? com.stremio.core.types.resource.Stream.Source.Tramvai
+        Log.i("TvValidation", "fixture=raw-torrent coreSource=tramvai sourceKind=torrent announceCount=${torrent?.value?.announce?.size ?: 0}")
+        startTvPlayback(target, option)
+    }
+
     internal fun enableTvValidationMedia() {
         val target = _tvStreamSelection.value.target ?: return
         if (tvValidationFixtures?.enableForCurrentSequence(target) == true) openTvStreams(target)

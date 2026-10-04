@@ -1,5 +1,11 @@
 package com.stremio.mobile.presentation.tv
 
+import android.content.ContextWrapper
+import com.stremio.core.types.resource.Stream
+import com.stremio.mobile.core.ResolvedPlayableSource
+import com.stremio.mobile.data.repository.PlayableSourceResolver
+import com.stremio.mobile.data.model.StreamSourceKind
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -174,6 +180,58 @@ class TvValidationFixturesTest {
         assertTrue(override.arm(fixturesActive = true))
         override.reset()
         assertEquals(PlayerEngine.EXO, override.requestedEngineFor(TvValidationFixtures.mediaId("B"), PlayerEngine.EXO, fixturesActive = true))
+    }
+
+    @Test fun `raw Sintel option is DEBUG-only Tramvai torrent with automatic file selection`() {
+        val debugFixtures = TvValidationFixtures(ContextWrapper(null), PlayableSourceResolver {
+            error("Resolver should not be called while constructing fixture")
+        }, debugBuild = true)
+        val option = requireNotNull(debugFixtures.rawTorrentOption(target("raw")))
+        val source = option.core.stream.source as Stream.Source.Tramvai
+
+        assertEquals(TvRawTorrentFixtureSource.SINTEL_INFO_HASH, source.value.infoHash)
+        assertNull(source.value.fileIdx)
+        assertEquals(TvRawTorrentFixtureSource.SINTEL_ANNOUNCE, source.value.announce)
+        assertTrue(source.value.fileMustInclude.isEmpty())
+        assertEquals(StreamSourceKind.Torrent, option.sourceKind)
+        assertEquals("DEBUG raw torrent", option.addonTitle)
+        assertFalse(TvValidationFixtures.mustUseCoreResolverForRawTorrent(
+            option.copy(semanticKey = "tv-validation-A"),
+        ))
+
+        val releaseFixtures = TvValidationFixtures(ContextWrapper(null), PlayableSourceResolver {
+            error("Disabled release fixture must not construct a source")
+        }, debugBuild = false)
+        assertNull(releaseFixtures.rawTorrentOption(target("raw-release")))
+    }
+
+    @Test fun `raw Sintel fixture always delegates to production Core resolver`() = runBlocking {
+        var delegated: com.stremio.mobile.data.model.StreamOption? = null
+        val resolved = ResolvedPlayableSource(
+            playableUri = "http://127.0.0.1:11470/sintel.mp4",
+            resolutionKind = "core-converted",
+            convertedSourceKind = "Torrent",
+            usedCoreConversion = true,
+            usedStreamingServer = true,
+        )
+        val coreResolver = PlayableSourceResolver { option -> delegated = option; resolved }
+        val fixtures = TvValidationFixtures(ContextWrapper(null), coreResolver, debugBuild = true)
+        val option = requireNotNull(fixtures.rawTorrentOption(target("raw")))
+
+        assertTrue(TvValidationFixtures.mustUseCoreResolverForRawTorrent(option))
+        assertEquals(resolved, fixtures.resolve(option))
+        assertTrue(delegated === option)
+    }
+
+    @Test fun `existing Smart Fallback candidates remain deterministic Direct sources`() {
+        val fixtures = TvValidationFixtures(ContextWrapper(null), PlayableSourceResolver {
+            error("Resolver should not be called while constructing candidates")
+        }, debugBuild = true)
+        val options = requireNotNull(fixtures.smartPlayOptions(target("smart")))
+
+        assertEquals(listOf(StreamSourceKind.Direct, StreamSourceKind.Direct, StreamSourceKind.Direct), options.map { it.sourceKind })
+        assertTrue(options.all { it.core.stream.source is Stream.Source.Url })
+        assertTrue(options.none(TvValidationFixtures::mustUseCoreResolverForRawTorrent))
     }
 
     private fun target(id: String, videoId: String? = "catalog-$id") = TvStreamTarget(

@@ -1,5 +1,6 @@
 package com.stremio.mobile.presentation.tv
 
+import android.content.ContextWrapper
 import com.stremio.core.types.addon.ResourcePath
 import com.stremio.core.types.addon.ResourceRequest
 import com.stremio.core.types.resource.Stream
@@ -88,6 +89,20 @@ class TvSmartFallbackTest {
         val next = next(session, "attempt-A")!!
         session = session.start(next, "attempt-B")!!
         assertEquals(snapshot, session.rankedCandidates.map { it.semanticKey })
+    }
+
+    @Test fun `real Tramvai source can live in ranked fallback session`() {
+        val fixtures = TvValidationFixtures(ContextWrapper(null), com.stremio.mobile.data.repository.PlayableSourceResolver {
+            error("This session test does not resolve sources")
+        }, debugBuild = true)
+        val torrent = requireNotNull(fixtures.rawTorrentOption(target))
+        val session = TvSmartPlaybackSession(target, listOf(option("A"), torrent, option("C")))
+            .start(0, "attempt-A")!!
+
+        assertEquals(StreamSourceKind.Torrent, session.rankedCandidates[1].sourceKind)
+        assertTrue(session.rankedCandidates[1].core.stream.source is Stream.Source.Tramvai)
+        assertEquals(1, next(session, "attempt-A"))
+        assertEquals(torrent.semanticKey, session.rankedCandidates[next(session, "attempt-A")!!].semanticKey)
     }
 
     @Test fun `new target invalidates previous session`() {

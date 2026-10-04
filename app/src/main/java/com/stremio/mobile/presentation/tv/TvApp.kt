@@ -315,6 +315,10 @@ internal fun TvApp(viewModel: MainViewModel) {
                             onArmHoldAfterFirstVisual = viewModel::armTvHoldAfterFirstVisual,
                             onArmMpvRequestedEngine = viewModel::armTvMpvRequestedEngineValidation,
                             onSmartPlayFixture = viewModel::playTvSmartValidationFixture,
+                            onRawTorrentFixture = {
+                                viewModel.playTvRawTorrentFixture()
+                                routeName = TvRouteState(TvRoute.Streams, detailsOrigin).openPlayer().route.name
+                            },
                         )
                     }
                     if (route == TvRoute.Player) {

@@ -24,6 +24,14 @@ internal object TvRawTorrentFixtureSource {
         "wss://tracker.openwebtorrent.com",
     )
 
+    fun target(): TvStreamTarget = TvStreamTarget(
+        contentType = "movie",
+        contentId = "debug-sintel",
+        contentName = "Sintel",
+        videoId = "debug-sintel",
+        guessStreamPath = false,
+    )
+
     fun create(target: TvStreamTarget): StreamOption {
         val request = ResourceRequest(
             base = "debug-raw-torrent",

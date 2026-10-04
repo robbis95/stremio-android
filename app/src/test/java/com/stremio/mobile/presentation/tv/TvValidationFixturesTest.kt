@@ -186,7 +186,11 @@ class TvValidationFixturesTest {
         val debugFixtures = TvValidationFixtures(ContextWrapper(null), PlayableSourceResolver {
             error("Resolver should not be called while constructing fixture")
         }, debugBuild = true)
-        val option = requireNotNull(debugFixtures.rawTorrentOption(target("raw")))
+        val fixtureTarget = requireNotNull(debugFixtures.rawTorrentTarget())
+        assertEquals("Sintel", fixtureTarget.contentName)
+        assertEquals("movie", fixtureTarget.contentType)
+        assertEquals("debug-sintel", fixtureTarget.contentId)
+        val option = requireNotNull(debugFixtures.rawTorrentOption(fixtureTarget))
         val source = option.core.stream.source as Stream.Source.Tramvai
 
         assertEquals(TvRawTorrentFixtureSource.SINTEL_INFO_HASH, source.value.infoHash)
@@ -202,6 +206,7 @@ class TvValidationFixturesTest {
         val releaseFixtures = TvValidationFixtures(ContextWrapper(null), PlayableSourceResolver {
             error("Disabled release fixture must not construct a source")
         }, debugBuild = false)
+        assertNull(releaseFixtures.rawTorrentTarget())
         assertNull(releaseFixtures.rawTorrentOption(target("raw-release")))
     }
 

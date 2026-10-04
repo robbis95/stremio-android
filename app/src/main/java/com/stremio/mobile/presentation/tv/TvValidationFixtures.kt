@@ -151,6 +151,9 @@ class TvValidationFixtures(
     }
 
     /** A legal, deterministic raw Torrent fixture that always enters the production Core resolver. */
+    internal fun rawTorrentTarget(): TvStreamTarget? =
+        if (debugBuild) TvRawTorrentFixtureSource.target() else null
+
     internal fun rawTorrentOption(target: TvStreamTarget): StreamOption? =
         if (debugBuild) TvRawTorrentFixtureSource.create(target) else null
 

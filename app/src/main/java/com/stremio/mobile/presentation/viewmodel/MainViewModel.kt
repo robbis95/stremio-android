@@ -2835,6 +2835,9 @@ class MainViewModel internal constructor(
         tvTorrentStartupStatsJob = viewModelScope.launch(Dispatchers.IO) {
             var firstPeerAtNanos: Long? = null
             var firstDownloadAtNanos: Long? = null
+            var firstProgressAtNanos: Long? = null
+            var usefulThroughputAtNanos: Long? = null
+            var usefulThroughputSamples = 0
             while (isActive && isCurrentTvAttempt(_tvPlayback.value, attempt.attemptId) && !_tvPlayback.value.firstVisualObserved) {
                 playbackRepository.requestStreamStatistics(infoHash, fileIndex)
                 delay(800)
@@ -2843,15 +2846,25 @@ class MainViewModel internal constructor(
                     val now = SystemClock.elapsedRealtimeNanos()
                     if (stats.peers > 0 && firstPeerAtNanos == null) firstPeerAtNanos = now
                     if (stats.downloadSpeed > 0.0 && firstDownloadAtNanos == null) firstDownloadAtNanos = now
+                    if (stats.streamProgress > 0.0 && firstProgressAtNanos == null) firstProgressAtNanos = now
+                    if (stats.downloadSpeed > 125_000.0) {
+                        usefulThroughputSamples++
+                        if (usefulThroughputSamples >= 2 && usefulThroughputAtNanos == null) usefulThroughputAtNanos = now
+                    } else {
+                        usefulThroughputSamples = 0
+                    }
                     val elapsedMs = (now - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000
                     val timeToFirstPeerMs = firstPeerAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
                     val timeToFirstDownloadMs = firstDownloadAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
+                    val timeToFirstProgressMs = firstProgressAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
+                    val timeToUsefulThroughputMs = usefulThroughputAtNanos?.let { (it - attempt.startedAtNanos).coerceAtLeast(0L) / 1_000_000 }
                     Log.d(
                         "TvStartupTorrent",
                         "attempt=${attempt.attemptId} elapsedMs=$elapsedMs peers=${stats.peers} " +
                             "downloadSpeedBps=${stats.downloadSpeed.toLong().coerceAtLeast(0L)} " +
                             "streamProgressPct=${(stats.streamProgress * 100).toInt().coerceIn(0, 100)} " +
-                            "firstPeerMs=${timeToFirstPeerMs ?: "pending"} firstDownloadMs=${timeToFirstDownloadMs ?: "pending"}",
+                            "firstPeerMs=${timeToFirstPeerMs ?: "pending"} firstDownloadMs=${timeToFirstDownloadMs ?: "pending"} " +
+                            "firstProgressMs=${timeToFirstProgressMs ?: "pending"} usefulThroughputMs=${timeToUsefulThroughputMs ?: "pending"}",
                     )
                 }
                 delay(200)
